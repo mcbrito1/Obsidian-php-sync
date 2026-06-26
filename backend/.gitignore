@@ -2,4 +2,4 @@
 /storage/
 /.env
 /.phpunit.cache/
-composer.lock
+/.phpstan.cache/

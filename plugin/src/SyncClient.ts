@@ -22,14 +22,33 @@ export class SyncError extends Error {
  * producao, ou um fake nos testes) — por isso nao importa nada de "obsidian".
  */
 export class SyncClient {
+    /** Callback opcional para re-autenticar quando o token expira (401). */
+    private onUnauthorized?: () => Promise<void>;
+
     constructor(
         private readonly request: HttpRequestFn,
         private serverUrl: string,
         private token: string = "",
+        private vaultId: string = "",
     ) {}
 
     setToken(token: string): void {
         this.token = token;
+    }
+
+    /** Define o cofre alvo (enviado no header X-Vault-Id). */
+    setVaultId(vaultId: string): void {
+        this.vaultId = vaultId;
+    }
+
+    /** Headers comuns a todas as requisições (inclui o cofre, se definido). */
+    private baseHeaders(): Record<string, string> {
+        return this.vaultId ? { "X-Vault-Id": this.vaultId } : {};
+    }
+
+    /** Registra um callback chamado uma vez em caso de 401 (deve renovar o token). */
+    setOnUnauthorized(callback: () => Promise<void>): void {
+        this.onUnauthorized = callback;
     }
 
     getToken(): string {
@@ -52,7 +71,7 @@ export class SyncClient {
         const response = await this.request({
             url: this.url("/auth"),
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { ...this.baseHeaders(), "Content-Type": "application/json" },
             body: JSON.stringify({ username, password }),
             throw: false,
         });
@@ -93,21 +112,46 @@ export class SyncClient {
 
     /** Lista os arquivos disponiveis no servidor. */
     async list(): Promise<RemoteFile[]> {
+        return this.fetchManifest("/list");
+    }
+
+    /** Manifesto (path + hash + mtime) usado para o delta sync. */
+    async manifest(): Promise<RemoteFile[]> {
+        return this.fetchManifest("/manifest");
+    }
+
+    private async fetchManifest(path: string): Promise<RemoteFile[]> {
         const response = await this.authedRequest({
-            url: this.url("/list"),
+            url: this.url(path),
             method: "GET",
             throw: false,
         });
 
         if (response.status !== 200) {
             throw new SyncError(
-                this.messageFrom(response, "Falha ao listar arquivos."),
+                this.messageFrom(response, "Falha ao obter o manifesto."),
                 response.status,
             );
         }
 
         const data = response.json as { files?: RemoteFile[] };
         return Array.isArray(data?.files) ? data.files : [];
+    }
+
+    /** Remove um arquivo no servidor (idempotente). */
+    async deleteFile(path: string): Promise<void> {
+        const response = await this.authedRequest({
+            url: this.url(`/file?path=${encodeURIComponent(path)}`),
+            method: "DELETE",
+            throw: false,
+        });
+
+        if (response.status !== 200) {
+            throw new SyncError(
+                this.messageFrom(response, `Falha ao remover ${path}.`),
+                response.status,
+            );
+        }
     }
 
     /** Baixa o conteudo (base64) de um arquivo do servidor. */
@@ -138,13 +182,27 @@ export class SyncClient {
             throw new SyncError("Nao autenticado. Configure e teste a conexao primeiro.");
         }
 
-        return this.request({
-            ...options,
-            headers: {
-                ...(options.headers ?? {}),
-                Authorization: `Bearer ${this.token}`,
-            },
-        });
+        const send = () =>
+            this.request({
+                ...options,
+                headers: {
+                    ...this.baseHeaders(),
+                    ...(options.headers ?? {}),
+                    Authorization: `Bearer ${this.token}`,
+                },
+            });
+
+        let response = await send();
+
+        // Token expirado: re-autentica (uma vez) e repete a requisição.
+        if (response.status === 401 && this.onUnauthorized) {
+            await this.onUnauthorized();
+            if (this.token !== "") {
+                response = await send();
+            }
+        }
+
+        return response;
     }
 
     /** Extrai uma mensagem de erro amigavel da resposta. */

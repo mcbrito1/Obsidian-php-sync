@@ -15,8 +15,10 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final class SyncController
 {
-    public function __construct(private readonly Storage $storage)
-    {
+    public function __construct(
+        private readonly Vaults $vaults,
+        private readonly int $maxFileSize = 0,
+    ) {
     }
 
     /**
@@ -25,42 +27,112 @@ final class SyncController
      */
     public function upload(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
+        try {
+            $storage = $this->storageFor($request);
+        } catch (\InvalidArgumentException $e) {
+            return self::json($response, 422, ['error' => 'invalid_vault', 'message' => $e->getMessage()]);
+        }
+
         $data = self::parseBody($request);
 
-        $path = isset($data['path']) ? (string) $data['path'] : '';
-        if ($path === '') {
+        $result = $this->writeOne($storage, $data);
+        if (isset($result['error'])) {
+            return self::json($response, $result['status'], $result['body']);
+        }
+
+        return self::json($response, 200, $result['body']);
+    }
+
+    /**
+     * POST /upload-batch
+     * Body JSON: { "files": [ { "path", "content" }, ... ] }
+     * Envia varios arquivos em uma unica requisicao.
+     */
+    public function uploadBatch(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        try {
+            $storage = $this->storageFor($request);
+        } catch (\InvalidArgumentException $e) {
+            return self::json($response, 422, ['error' => 'invalid_vault', 'message' => $e->getMessage()]);
+        }
+
+        $data = self::parseBody($request);
+        $files = $data['files'] ?? null;
+        if (!\is_array($files)) {
             return self::json($response, 422, [
                 'error' => 'invalid_request',
-                'message' => 'Campo "path" e obrigatorio.',
+                'message' => 'Campo "files" (array) e obrigatorio.',
             ]);
         }
 
+        $results = [];
+        foreach ($files as $entry) {
+            if (!\is_array($entry)) {
+                return self::json($response, 422, [
+                    'error' => 'invalid_request',
+                    'message' => 'Cada item de "files" deve ser um objeto.',
+                ]);
+            }
+            $result = $this->writeOne($storage, $entry);
+            if (isset($result['error'])) {
+                return self::json($response, $result['status'], $result['body']);
+            }
+            $results[] = $result['body'];
+        }
+
+        return self::json($response, 200, ['status' => 'ok', 'files' => $results]);
+    }
+
+    /**
+     * Valida e grava um unico arquivo. Retorna um array com 'body' e, em caso
+     * de falha, 'error' + 'status'.
+     *
+     * @param array<string,mixed> $data
+     * @return array{body:array<string,mixed>,error?:bool,status?:int}
+     */
+    private function writeOne(Storage $storage, array $data): array
+    {
+        $path = isset($data['path']) ? (string) $data['path'] : '';
+        if ($path === '') {
+            return ['error' => true, 'status' => 422, 'body' => [
+                'error' => 'invalid_request',
+                'message' => 'Campo "path" e obrigatorio.',
+            ]];
+        }
+
         if (!array_key_exists('content', $data)) {
-            return self::json($response, 422, [
+            return ['error' => true, 'status' => 422, 'body' => [
                 'error' => 'invalid_request',
                 'message' => 'Campo "content" e obrigatorio.',
-            ]);
+            ]];
         }
 
         $decoded = base64_decode((string) $data['content'], true);
         if ($decoded === false) {
-            return self::json($response, 422, [
+            return ['error' => true, 'status' => 422, 'body' => [
                 'error' => 'invalid_request',
                 'message' => 'Campo "content" deve estar em base64 valido.',
-            ]);
+            ]];
+        }
+
+        if ($this->maxFileSize > 0 && \strlen($decoded) > $this->maxFileSize) {
+            return ['error' => true, 'status' => 413, 'body' => [
+                'error' => 'file_too_large',
+                'message' => "Arquivo excede o limite de {$this->maxFileSize} bytes.",
+                'path' => $path,
+            ]];
         }
 
         try {
-            $this->storage->write($path, $decoded);
+            $storage->write($path, $decoded);
         } catch (\InvalidArgumentException $e) {
-            return self::json($response, 422, ['error' => 'invalid_path', 'message' => $e->getMessage()]);
+            return ['error' => true, 'status' => 422, 'body' => [
+                'error' => 'invalid_path',
+                'message' => $e->getMessage(),
+            ]];
         }
 
-        return self::json($response, 200, [
-            'status' => 'ok',
-            'path' => $path,
-            'size' => \strlen($decoded),
-        ]);
+        return ['body' => ['status' => 'ok', 'path' => $path, 'size' => \strlen($decoded)]];
     }
 
     /**
@@ -78,14 +150,15 @@ final class SyncController
         }
 
         try {
-            if (!$this->storage->exists($path)) {
+            $storage = $this->storageFor($request);
+            if (!$storage->exists($path)) {
                 return self::json($response, 404, [
                     'error' => 'not_found',
                     'message' => "Arquivo nao encontrado: {$path}",
                 ]);
             }
 
-            $contents = $this->storage->read($path);
+            $contents = $storage->read($path);
         } catch (\InvalidArgumentException $e) {
             return self::json($response, 422, ['error' => 'invalid_path', 'message' => $e->getMessage()]);
         }
@@ -98,11 +171,51 @@ final class SyncController
     }
 
     /**
-     * GET /list -> { "files": [ { "path", "size", "mtime" }, ... ] }
+     * GET /list -> { "files": [ { "path", "hash", "size", "mtime" }, ... ] }
+     * GET /manifest -> idem (nome semantico usado pelo cliente para o delta sync).
      */
     public function list(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
-        return self::json($response, 200, ['files' => $this->storage->list()]);
+        try {
+            $storage = $this->storageFor($request);
+        } catch (\InvalidArgumentException $e) {
+            return self::json($response, 422, ['error' => 'invalid_vault', 'message' => $e->getMessage()]);
+        }
+
+        return self::json($response, 200, ['files' => $storage->list()]);
+    }
+
+    /**
+     * DELETE /file?path=Notas/foo.md
+     * Idempotente: retorna 200 mesmo que o arquivo ja nao exista.
+     */
+    public function delete(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $path = (string) ($request->getQueryParams()['path'] ?? '');
+        if ($path === '') {
+            return self::json($response, 422, [
+                'error' => 'invalid_request',
+                'message' => 'Parametro "path" e obrigatorio.',
+            ]);
+        }
+
+        try {
+            $deleted = $this->storageFor($request)->delete($path);
+        } catch (\InvalidArgumentException $e) {
+            return self::json($response, 422, ['error' => 'invalid_path', 'message' => $e->getMessage()]);
+        }
+
+        return self::json($response, 200, [
+            'status' => 'ok',
+            'path' => $path,
+            'deleted' => $deleted,
+        ]);
+    }
+
+    /** Resolve o Storage do cofre indicado no header X-Vault-Id (ou "default"). */
+    private function storageFor(ServerRequestInterface $request): Storage
+    {
+        return $this->vaults->for($request->getHeaderLine('X-Vault-Id'));
     }
 
     /**

@@ -16,12 +16,15 @@ use Slim\Routing\RouteCollectorProxy;
  */
 final class AppFactory
 {
+    /**
+     * @return App<\Psr\Container\ContainerInterface|null>
+     */
     public static function create(?Config $config = null): App
     {
         $config ??= Config::fromEnvironment();
 
         $jwt = new Jwt($config->jwtSecret, $config->jwtTtl);
-        $storage = new Storage($config->storagePath);
+        $vaults = new Vaults($config->storagePath, $config->keepVersions);
 
         $app = SlimAppFactory::create();
         $app->addRoutingMiddleware();
@@ -46,7 +49,7 @@ final class AppFactory
         });
 
         $auth = new AuthController($config, $jwt);
-        $sync = new SyncController($storage);
+        $sync = new SyncController($vaults, $config->maxFileSize);
         $authMiddleware = new AuthMiddleware($jwt);
 
         // Healthcheck publico.
@@ -62,8 +65,11 @@ final class AppFactory
         // Rotas protegidas por Bearer token.
         $app->group('', static function (RouteCollectorProxy $group) use ($sync): void {
             $group->post('/upload', [$sync, 'upload']);
+            $group->post('/upload-batch', [$sync, 'uploadBatch']);
             $group->get('/download', [$sync, 'download']);
             $group->get('/list', [$sync, 'list']);
+            $group->get('/manifest', [$sync, 'list']);
+            $group->delete('/file', [$sync, 'delete']);
         })->add($authMiddleware);
 
         return $app;

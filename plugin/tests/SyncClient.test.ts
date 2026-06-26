@@ -76,6 +76,24 @@ describe("SyncClient rotas protegidas", () => {
         expect(calls[0].headers?.Authorization).toBe("Bearer meu-token");
     });
 
+    it("inclui o header X-Vault-Id quando definido", async () => {
+        const { fn, calls } = fakeHttp(() => jsonResponse(200, { files: [] }));
+        const client = new SyncClient(fn, "http://localhost:8080", "t", "alice");
+
+        await client.list();
+
+        expect(calls[0].headers?.["X-Vault-Id"]).toBe("alice");
+    });
+
+    it("omite X-Vault-Id quando vazio", async () => {
+        const { fn, calls } = fakeHttp(() => jsonResponse(200, { files: [] }));
+        const client = new SyncClient(fn, "http://localhost:8080", "t");
+
+        await client.list();
+
+        expect(calls[0].headers?.["X-Vault-Id"]).toBeUndefined();
+    });
+
     it("lanca se nao houver token", async () => {
         const { fn } = fakeHttp(() => jsonResponse(200, {}));
         const client = new SyncClient(fn, "http://localhost:8080");
@@ -110,13 +128,44 @@ describe("SyncClient rotas protegidas", () => {
 
     it("list retorna o array de arquivos", async () => {
         const { fn } = fakeHttp(() =>
-            jsonResponse(200, { files: [{ path: "a.md", size: 2, mtime: 5 }] }),
+            jsonResponse(200, { files: [{ path: "a.md", hash: "h", size: 2, mtime: 5 }] }),
         );
         const client = new SyncClient(fn, "http://localhost:8080", "t");
 
         const files = await client.list();
 
-        expect(files).toEqual([{ path: "a.md", size: 2, mtime: 5 }]);
+        expect(files).toEqual([{ path: "a.md", hash: "h", size: 2, mtime: 5 }]);
+    });
+
+    it("manifest busca /manifest e retorna os arquivos com hash", async () => {
+        const { fn, calls } = fakeHttp(() =>
+            jsonResponse(200, { files: [{ path: "a.md", hash: "abc", size: 1, mtime: 0 }] }),
+        );
+        const client = new SyncClient(fn, "http://localhost:8080", "t");
+
+        const files = await client.manifest();
+
+        expect(calls[0].url).toBe("http://localhost:8080/manifest");
+        expect(files[0].hash).toBe("abc");
+    });
+
+    it("deleteFile faz DELETE em /file com o path escapado", async () => {
+        const { fn, calls } = fakeHttp(() => jsonResponse(200, { status: "ok", deleted: true }));
+        const client = new SyncClient(fn, "http://localhost:8080", "t");
+
+        await client.deleteFile("Notas/foo.md");
+
+        expect(calls[0].method).toBe("DELETE");
+        expect(calls[0].url).toBe("http://localhost:8080/file?path=Notas%2Ffoo.md");
+    });
+
+    it("deleteFile propaga erro do servidor", async () => {
+        const { fn } = fakeHttp(() =>
+            jsonResponse(422, { error: "invalid_path", message: "Travessia nao permitida." }),
+        );
+        const client = new SyncClient(fn, "http://localhost:8080", "t");
+
+        await expect(client.deleteFile("../x")).rejects.toMatchObject({ status: 422 });
     });
 
     it("download faz escape do path na query e retorna o conteudo", async () => {
@@ -129,6 +178,40 @@ describe("SyncClient rotas protegidas", () => {
         expect(calls[0].url).toBe(
             "http://localhost:8080/download?path=Notas%2Fcom%20espaco.md",
         );
+    });
+
+    it("re-autentica e repete a requisição uma vez em caso de 401", async () => {
+        let firstCall = true;
+        const { fn, calls } = fakeHttp(() => {
+            if (firstCall) {
+                firstCall = false;
+                return jsonResponse(401, { error: "unauthorized" });
+            }
+            return jsonResponse(200, { files: [] });
+        });
+        const client = new SyncClient(fn, "http://localhost:8080", "expirado");
+        client.setOnUnauthorized(async () => {
+            client.setToken("renovado");
+        });
+
+        const files = await client.list();
+
+        expect(files).toEqual([]);
+        expect(calls).toHaveLength(2);
+        expect(calls[0].headers?.Authorization).toBe("Bearer expirado");
+        expect(calls[1].headers?.Authorization).toBe("Bearer renovado");
+    });
+
+    it("não entra em loop se a re-autenticação não renova o token", async () => {
+        const { fn, calls } = fakeHttp(() => jsonResponse(401, { error: "unauthorized" }));
+        const client = new SyncClient(fn, "http://localhost:8080", "t");
+        client.setOnUnauthorized(async () => {
+            /* não renova */
+        });
+
+        await expect(client.list()).rejects.toMatchObject({ status: 401 });
+        // 1ª chamada + 1 retry (token continuou) — sem loop infinito.
+        expect(calls.length).toBeLessThanOrEqual(2);
     });
 
     it("download lanca 404 quando o arquivo nao existe", async () => {

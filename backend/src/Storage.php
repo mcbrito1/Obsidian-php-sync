@@ -10,9 +10,15 @@ namespace ObsidianSync;
  */
 final class Storage
 {
+    /** Subpasta (oculta) onde versoes anteriores sao guardadas. */
+    private const VERSIONS_DIR = '.versions';
+
     private readonly string $root;
 
-    public function __construct(string $root)
+    /**
+     * @param int $keepVersions numero de versoes anteriores a manter (0 = desativado).
+     */
+    public function __construct(string $root, private readonly int $keepVersions = 0)
     {
         if (!is_dir($root) && !@mkdir($root, 0775, true) && !is_dir($root)) {
             throw new \RuntimeException("Nao foi possivel criar o diretorio de armazenamento: {$root}");
@@ -64,6 +70,10 @@ final class Storage
             throw new \InvalidArgumentException('Caminho invalido.');
         }
 
+        if ($segments[0] === self::VERSIONS_DIR) {
+            throw new \InvalidArgumentException('Caminho reservado.');
+        }
+
         return $this->root . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $segments);
     }
 
@@ -73,6 +83,12 @@ final class Storage
     public function write(string $relativePath, string $contents): void
     {
         $absolute = $this->resolve($relativePath);
+
+        // Versiona o conteudo anterior antes de sobrescrever.
+        if ($this->keepVersions > 0 && is_file($absolute)) {
+            $this->snapshot($relativePath, $absolute);
+        }
+
         $dir = \dirname($absolute);
 
         if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
@@ -104,13 +120,89 @@ final class Storage
         return $contents;
     }
 
+    /** Hash sha256 do conteudo de um arquivo (hex). */
+    public function hash(string $relativePath): string
+    {
+        $absolute = $this->resolve($relativePath);
+        if (!is_file($absolute)) {
+            throw new \RuntimeException("Arquivo nao encontrado: {$relativePath}");
+        }
+
+        $hash = hash_file('sha256', $absolute);
+        if ($hash === false) {
+            throw new \RuntimeException("Falha ao calcular o hash de: {$relativePath}");
+        }
+
+        return $hash;
+    }
+
+    /**
+     * Remove um arquivo do cofre. E idempotente: retorna false se ja nao existia.
+     */
+    public function delete(string $relativePath): bool
+    {
+        $absolute = $this->resolve($relativePath);
+        if (!is_file($absolute)) {
+            return false;
+        }
+
+        // Guarda uma versao antes de remover (soft-delete).
+        if ($this->keepVersions > 0) {
+            $this->snapshot($relativePath, $absolute);
+        }
+
+        if (!@unlink($absolute)) {
+            throw new \RuntimeException("Falha ao remover o arquivo: {$relativePath}");
+        }
+
+        return true;
+    }
+
+    /**
+     * Copia a versao atual de um arquivo para `.versions/<path>.<timestamp>` e
+     * mantem apenas as $keepVersions copias mais recentes.
+     */
+    private function snapshot(string $relativePath, string $absolute): void
+    {
+        $versionDir = $this->root . DIRECTORY_SEPARATOR . self::VERSIONS_DIR
+            . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+        $parent = \dirname($versionDir);
+
+        if (!is_dir($parent) && !@mkdir($parent, 0775, true) && !is_dir($parent)) {
+            throw new \RuntimeException("Nao foi possivel criar o diretorio de versoes: {$parent}");
+        }
+
+        $base = basename($relativePath);
+        $stamp = sprintf('%d.%06d', time(), random_int(0, 999999));
+        @copy($absolute, $parent . DIRECTORY_SEPARATOR . $base . '.' . $stamp);
+
+        $this->pruneVersions($parent, $base);
+    }
+
+    private function pruneVersions(string $parent, string $base): void
+    {
+        $matches = glob($parent . DIRECTORY_SEPARATOR . $base . '.*') ?: [];
+        if (\count($matches) <= $this->keepVersions) {
+            return;
+        }
+
+        // Mais antigos primeiro; remove o excedente.
+        usort($matches, static fn (string $a, string $b): int => filemtime($a) <=> filemtime($b));
+        $excess = \count($matches) - $this->keepVersions;
+        for ($i = 0; $i < $excess; $i++) {
+            @unlink($matches[$i]);
+        }
+    }
+
     /**
      * Lista todos os arquivos do cofre como caminhos relativos (com "/"),
-     * acompanhados de tamanho e data de modificacao.
+     * acompanhados de hash, tamanho e data de modificacao.
      *
-     * @return list<array{path:string,size:int,mtime:int}>
+     * @param bool $withHash quando true, inclui o sha256 de cada arquivo.
+     *
+     * @return list<array{path:string,hash:string,size:int,mtime:int}>
      */
-    public function list(): array
+    public function list(bool $withHash = true): array
     {
         $iterator = new \RecursiveIteratorIterator(
             new \RecursiveDirectoryIterator($this->root, \FilesystemIterator::SKIP_DOTS),
@@ -127,8 +219,14 @@ final class Storage
             $relative = substr($file->getPathname(), \strlen($this->root) + 1);
             $relative = str_replace('\\', '/', $relative);
 
+            // Nao expoe o historico de versoes na listagem.
+            if (str_starts_with($relative, self::VERSIONS_DIR . '/')) {
+                continue;
+            }
+
             $files[] = [
                 'path' => $relative,
+                'hash' => $withHash ? (string) hash_file('sha256', $file->getPathname()) : '',
                 'size' => $file->getSize(),
                 'mtime' => $file->getMTime(),
             ];

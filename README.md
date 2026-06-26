@@ -8,9 +8,10 @@ por duas partes independentes:
 | **Backend REST** | PHP 8.1+ · Slim Framework 4 | [`backend/`](backend) |
 | **Plugin** | TypeScript · API do Obsidian | [`plugin/`](plugin) |
 
-O plugin envia (`upload`) todos os arquivos do cofre para o servidor e baixa
-(`download`) os arquivos que existem no servidor mas não localmente — uma
-sincronização aditiva e não destrutiva.
+O plugin faz uma **sincronização delta de 3 vias** (por hash): envia/baixa apenas
+o que mudou, propaga exclusões e resolve conflitos pela versão mais recente
+(`mtime`). Inclui auto-sync, filtros glob, múltiplos cofres e versionamento no
+servidor.
 
 ## Estrutura de pastas
 
@@ -24,26 +25,33 @@ Obsidian-php-sync/
 │   │   ├── Jwt.php            # JWT HS256 auto-contido (sem dependências)
 │   │   ├── AuthController.php # POST /auth
 │   │   ├── AuthMiddleware.php # Valida o Bearer token
-│   │   ├── SyncController.php # POST /upload, GET /download, GET /list
-│   │   └── Storage.php        # Leitura/escrita com proteção a path traversal
+│   │   ├── SyncController.php # upload/upload-batch/download/manifest/file
+│   │   ├── Vaults.php         # Isolamento de múltiplos cofres (X-Vault-Id)
+│   │   └── Storage.php        # I/O com proteção a traversal + versionamento
 │   ├── tests/                # Testes PHPUnit (unitários + integração)
 │   ├── composer.json
 │   ├── phpunit.xml
+│   ├── phpstan.neon
 │   ├── Dockerfile
 │   └── .env.example
 │
-└── plugin/                   # Plugin do Obsidian
-    ├── manifest.json
-    ├── main.ts               # Plugin: Settings Tab, Ribbon, comando, sync
-    ├── src/                  # Lógica pura e testável (não importa "obsidian")
-    │   ├── SyncClient.ts      # Cliente HTTP (auth/upload/download/list)
-    │   ├── syncPlan.ts        # Estratégia de sincronização
-    │   ├── base64.ts          # Conversão base64 ↔ binário portável
-    │   └── types.ts
-    ├── tests/                # Testes Vitest
-    ├── esbuild.config.mjs
-    ├── package.json
-    └── tsconfig.json
+├── plugin/                   # Plugin do Obsidian
+│   ├── manifest.json
+│   ├── main.ts               # Plugin: Settings Tab, Ribbon, comando, auto-sync
+│   ├── src/                  # Lógica pura e testável (não importa "obsidian")
+│   │   ├── SyncClient.ts      # Cliente HTTP (auth/upload/download/manifest/delete)
+│   │   ├── syncPlan.ts        # Sync delta de 3 vias + buildLastSync
+│   │   ├── filter.ts          # Filtros glob include/exclude
+│   │   ├── hash.ts            # sha256 (Web Crypto)
+│   │   ├── base64.ts          # Conversão base64 ↔ binário portável
+│   │   └── types.ts
+│   ├── tests/                # Testes Vitest (+ mock de "obsidian")
+│   ├── esbuild.config.mjs
+│   ├── eslint.config.mjs
+│   ├── package.json
+│   └── tsconfig.json
+│
+└── .github/workflows/ci.yml  # CI: testes/lint/build do backend e do plugin
 ```
 
 ## Início rápido
@@ -82,8 +90,10 @@ abra **Configurações → PHP Sync**, preencha URL/usuário/senha, clique em
 ## Testes
 
 ```bash
-cd backend && composer test     # PHPUnit  (22 testes)
-cd plugin  && npm test          # Vitest   (19 testes)
+cd backend && composer test && composer phpstan    # PHPUnit (44) + PHPStan
+cd plugin  && npm run lint && npm test && npm run build   # ESLint + Vitest (49) + build
 ```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) roda tudo isso em cada PR/push.
 
 Detalhes em [`backend/README.md`](backend/README.md) e [`plugin/README.md`](plugin/README.md).

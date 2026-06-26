@@ -34,6 +34,8 @@ docker run -p 8080:8080 -v "$PWD/data:/data" \
 | `JWT_SECRET` | *(troque!)* | Segredo HMAC para assinar os tokens |
 | `JWT_TTL` | `86400` | Validade do token, em segundos |
 | `STORAGE_PATH` | `backend/storage` | Onde os arquivos são salvos |
+| `MAX_FILE_SIZE` | `0` | Tamanho máximo por arquivo em bytes (0 = ilimitado) |
+| `KEEP_VERSIONS` | `0` | Versões anteriores a manter por arquivo (0 = desativado) |
 
 As variáveis podem vir do ambiente ou de um arquivo `.env` na raiz do backend.
 
@@ -44,10 +46,24 @@ As variáveis podem vir do ambiente ou de um arquivo `.env` na raiz do backend.
 | `GET` | `/health` | — | Healthcheck (`{"status":"ok"}`) |
 | `POST` | `/auth` | — | Recebe `{username,password}` e devolve `{token,...}` |
 | `POST` | `/upload` | Bearer | Recebe `{path, content}` (content em **base64**) |
+| `POST` | `/upload-batch` | Bearer | Recebe `{files:[{path,content}]}` (vários de uma vez) |
 | `GET` | `/download?path=…` | Bearer | Devolve `{path, content (base64), size}` |
-| `GET` | `/list` | Bearer | Lista `{files:[{path,size,mtime}]}` |
+| `GET` | `/list` ou `/manifest` | Bearer | Lista `{files:[{path,hash,size,mtime}]}` |
+| `DELETE` | `/file?path=…` | Bearer | Remove um arquivo (idempotente) |
 
 Rotas protegidas exigem o header `Authorization: Bearer <token>`.
+
+### Múltiplos cofres
+
+Envie o header `X-Vault-Id: <id>` para isolar o conteúdo em subdiretórios
+(`STORAGE_PATH/<id>/...`). Sem o header, usa-se o cofre `default`. Ids válidos:
+`[A-Za-z0-9._-]` (sem `..`).
+
+### Versionamento (soft-delete)
+
+Com `KEEP_VERSIONS > 0`, toda sobrescrita ou exclusão guarda uma cópia em
+`.versions/<path>.<timestamp>` (mantendo as N mais recentes). O diretório
+`.versions/` é reservado e nunca aparece em `/list` nem `/manifest`.
 
 ### Exemplos com `curl`
 

@@ -47,6 +47,43 @@ final class StorageTest extends TestCase
         self::assertSame(1, $files[1]['size']); // "b"
     }
 
+    public function testHashMatchesSha256OfContent(): void
+    {
+        $storage = new Storage($this->root);
+        $storage->write('a.md', 'conteudo');
+
+        self::assertSame(hash('sha256', 'conteudo'), $storage->hash('a.md'));
+    }
+
+    public function testListIncludesHash(): void
+    {
+        $storage = new Storage($this->root);
+        $storage->write('a.md', 'x');
+
+        $files = $storage->list();
+
+        self::assertSame(hash('sha256', 'x'), $files[0]['hash']);
+    }
+
+    public function testDeleteRemovesFileAndIsIdempotent(): void
+    {
+        $storage = new Storage($this->root);
+        $storage->write('a.md', 'x');
+
+        self::assertTrue($storage->delete('a.md'));
+        self::assertFalse($storage->exists('a.md'));
+        // Segunda remocao nao falha, apenas retorna false.
+        self::assertFalse($storage->delete('a.md'));
+    }
+
+    public function testDeleteBlocksPathTraversal(): void
+    {
+        $storage = new Storage($this->root);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $storage->delete('../escape.md');
+    }
+
     public function testWriteSupportsBinaryContent(): void
     {
         $storage = new Storage($this->root);
@@ -80,6 +117,54 @@ final class StorageTest extends TestCase
             'only slashes' => ['///'],
             'null byte' => ["foo\0.md"],
         ];
+    }
+
+    public function testVersioningKeepsPreviousContentOnOverwriteAndDelete(): void
+    {
+        $storage = new Storage($this->root, keepVersions: 3);
+
+        $storage->write('nota.md', 'v1');
+        $storage->write('nota.md', 'v2'); // versiona "v1"
+        $storage->delete('nota.md');       // versiona "v2"
+
+        $versions = glob($this->root . '/.versions/nota.md.*') ?: [];
+        self::assertCount(2, $versions);
+
+        $contents = array_map(static fn (string $p): string|false => file_get_contents($p), $versions);
+        self::assertContains('v1', $contents);
+        self::assertContains('v2', $contents);
+    }
+
+    public function testVersionsAreHiddenFromListing(): void
+    {
+        $storage = new Storage($this->root, keepVersions: 2);
+        $storage->write('nota.md', 'v1');
+        $storage->write('nota.md', 'v2');
+
+        $paths = array_column($storage->list(), 'path');
+
+        self::assertSame(['nota.md'], $paths);
+    }
+
+    public function testVersionsDirIsReserved(): void
+    {
+        $storage = new Storage($this->root, keepVersions: 1);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $storage->write('.versions/forjado.md', 'x');
+    }
+
+    public function testPruneKeepsOnlyNewestVersions(): void
+    {
+        $storage = new Storage($this->root, keepVersions: 2);
+
+        $storage->write('n.md', 'a');
+        $storage->write('n.md', 'b');
+        $storage->write('n.md', 'c');
+        $storage->write('n.md', 'd'); // 3 versoes geradas (a,b,c), mantem 2
+
+        $versions = glob($this->root . '/.versions/n.md.*') ?: [];
+        self::assertCount(2, $versions);
     }
 
     public function testResolveStaysInsideRoot(): void

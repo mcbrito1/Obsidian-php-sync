@@ -19,6 +19,8 @@ final class Config
         public readonly string $jwtSecret,
         public readonly int $jwtTtl,
         public readonly string $storagePath,
+        public readonly int $maxFileSize = 0,
+        public readonly int $keepVersions = 0,
     ) {
     }
 
@@ -46,6 +48,8 @@ final class Config
             jwtSecret: $get('JWT_SECRET', 'please-change-this-secret-in-production'),
             jwtTtl: (int) $get('JWT_TTL', '86400'),
             storagePath: $get('STORAGE_PATH', $defaultStorage),
+            maxFileSize: (int) $get('MAX_FILE_SIZE', '0'),
+            keepVersions: (int) $get('KEEP_VERSIONS', '0'),
         );
     }
 }

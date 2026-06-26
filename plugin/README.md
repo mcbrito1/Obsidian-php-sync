@@ -31,14 +31,30 @@ npm run dev
    - pelo ícone 🔄 **Iniciar Sincronização** na barra lateral (ribbon), ou
    - pela paleta de comandos (`Ctrl/Cmd+P`) → **Iniciar Sincronização**.
 
-### Estratégia de sincronização
+### Estratégia de sincronização (delta de 3 vias)
 
-- **Upload:** todos os arquivos locais são enviados ao servidor.
-- **Download:** arquivos presentes no servidor e ausentes localmente são baixados.
-- Nada é apagado — a sincronização é aditiva (veja `src/syncPlan.ts`).
+A sincronização compara o estado **local**, o **remoto** (`/manifest`, com hash
+sha256) e o **último sync** salvo, para transferir apenas o que mudou
+(`src/syncPlan.ts`):
+
+- Arquivo novo de um lado → enviado/baixado.
+- Arquivo removido de um lado (e inalterado no outro) → a exclusão é **propagada**.
+- Editado só de um lado → enviado naquele sentido.
+- **Conflito** (editado nos dois lados) → vence a versão de **`mtime` maior**.
 
 Arquivos binários (imagens, PDFs, anexos) são suportados: o conteúdo trafega
 em base64 (`src/base64.ts`) e é gravado via `vault.createBinary/modifyBinary`.
+Exclusões locais usam a lixeira configurada do Obsidian (`fileManager.trashFile`).
+
+### Automação e filtros
+
+- **Auto-sync** ao iniciar, por intervalo (minutos) e/ou ao alterar arquivos
+  (com debounce de 5s) — tudo opcional nas configurações.
+- **Filtros glob** include/exclude (`.obsidian/` e `.trash/` excluídos por
+  padrão) — veja `src/filter.ts`.
+- **Re-autenticação automática** quando o token expira (401).
+- **Barra de status** com progresso e horário do último sync.
+- **ID do cofre** (header `X-Vault-Id`) para usar vários cofres no mesmo servidor.
 
 ## Arquitetura (por que é testável)
 
