@@ -146,6 +146,51 @@ final class StorageTest extends TestCase
         self::assertSame(['nota.md'], $paths);
     }
 
+    public function testListAndReadVersions(): void
+    {
+        $storage = new Storage($this->root, keepVersions: 5);
+        $storage->write('nota.md', 'v1');
+        $storage->write('nota.md', 'v2'); // versiona v1
+        $storage->write('nota.md', 'v3'); // versiona v2
+
+        $versions = $storage->listVersions('nota.md');
+        self::assertCount(2, $versions);
+        self::assertArrayHasKey('id', $versions[0]);
+        self::assertArrayHasKey('mtime', $versions[0]);
+
+        // Reconstroi os conteudos a partir dos ids.
+        $contents = array_map(
+            static fn (array $v): string => $storage->readVersion('nota.md', $v['id']),
+            $versions,
+        );
+        self::assertContains('v1', $contents);
+        self::assertContains('v2', $contents);
+    }
+
+    public function testListVersionsEmptyWhenNoHistory(): void
+    {
+        $storage = new Storage($this->root, keepVersions: 5);
+        $storage->write('nota.md', 'v1');
+
+        self::assertSame([], $storage->listVersions('nota.md'));
+    }
+
+    public function testReadVersionRejectsMalformedId(): void
+    {
+        $storage = new Storage($this->root, keepVersions: 5);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $storage->readVersion('nota.md', '../etc/passwd');
+    }
+
+    public function testReadVersionMissingThrows(): void
+    {
+        $storage = new Storage($this->root, keepVersions: 5);
+
+        $this->expectException(\RuntimeException::class);
+        $storage->readVersion('nota.md', '123.456');
+    }
+
     public function testVersionsDirIsReserved(): void
     {
         $storage = new Storage($this->root, keepVersions: 1);

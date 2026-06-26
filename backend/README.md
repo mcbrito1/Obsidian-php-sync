@@ -49,6 +49,8 @@ As variáveis podem vir do ambiente ou de um arquivo `.env` na raiz do backend.
 | `POST` | `/upload-batch` | Bearer | Recebe `{files:[{path,content}]}` (vários de uma vez) |
 | `GET` | `/download?path=…` | Bearer | Devolve `{path, content (base64), size}` |
 | `GET` | `/list` ou `/manifest` | Bearer | Lista `{files:[{path,hash,size,mtime}]}` |
+| `GET` | `/versions?path=…` | Bearer | Histórico: `{versions:[{id,size,mtime}]}` |
+| `GET` | `/version?path=…&id=…` | Bearer | Conteúdo de uma versão (`{content (base64)}`) |
 | `DELETE` | `/file?path=…` | Bearer | Remove um arquivo (idempotente) |
 
 Rotas protegidas exigem o header `Authorization: Bearer <token>`.

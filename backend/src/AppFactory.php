@@ -69,6 +69,8 @@ final class AppFactory
             $group->get('/download', [$sync, 'download']);
             $group->get('/list', [$sync, 'list']);
             $group->get('/manifest', [$sync, 'list']);
+            $group->get('/versions', [$sync, 'versions']);
+            $group->get('/version', [$sync, 'version']);
             $group->delete('/file', [$sync, 'delete']);
         })->add($authMiddleware);
 

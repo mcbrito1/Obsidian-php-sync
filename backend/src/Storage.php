@@ -195,6 +195,74 @@ final class Storage
     }
 
     /**
+     * Localiza a pasta e o prefixo das versoes de um arquivo.
+     *
+     * @return array{0:string,1:string} [pasta das versoes, nome base do arquivo]
+     */
+    private function versionLocation(string $relativePath): array
+    {
+        $this->resolve($relativePath); // valida (traversal, .versions reservado, etc.)
+
+        $versionDir = $this->root . DIRECTORY_SEPARATOR . self::VERSIONS_DIR
+            . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
+
+        return [\dirname($versionDir), basename($relativePath)];
+    }
+
+    /**
+     * Lista as versoes anteriores guardadas de um arquivo (mais recentes primeiro).
+     *
+     * @return list<array{id:string,size:int,mtime:int}>
+     */
+    public function listVersions(string $relativePath): array
+    {
+        [$parent, $base] = $this->versionLocation($relativePath);
+
+        $matches = glob($parent . DIRECTORY_SEPARATOR . $base . '.*') ?: [];
+
+        $versions = [];
+        foreach ($matches as $file) {
+            $id = substr(basename($file), \strlen($base) + 1);
+            $versions[] = [
+                'id' => $id,
+                'size' => (int) filesize($file),
+                'mtime' => (int) filemtime($file),
+            ];
+        }
+
+        usort($versions, static fn (array $a, array $b): int => $b['mtime'] <=> $a['mtime']);
+
+        return $versions;
+    }
+
+    /**
+     * Le o conteudo de uma versao especifica.
+     *
+     * @throws \InvalidArgumentException quando o id e mal formado.
+     * @throws \RuntimeException quando a versao nao existe.
+     */
+    public function readVersion(string $relativePath, string $id): string
+    {
+        if (!preg_match('/^\d+\.\d+$/', $id)) {
+            throw new \InvalidArgumentException('Identificador de versao invalido.');
+        }
+
+        [$parent, $base] = $this->versionLocation($relativePath);
+        $file = $parent . DIRECTORY_SEPARATOR . $base . '.' . $id;
+
+        if (!is_file($file)) {
+            throw new \RuntimeException("Versao nao encontrada: {$relativePath}@{$id}");
+        }
+
+        $contents = file_get_contents($file);
+        if ($contents === false) {
+            throw new \RuntimeException("Falha ao ler a versao: {$relativePath}@{$id}");
+        }
+
+        return $contents;
+    }
+
+    /**
      * Lista todos os arquivos do cofre como caminhos relativos (com "/"),
      * acompanhados de hash, tamanho e data de modificacao.
      *

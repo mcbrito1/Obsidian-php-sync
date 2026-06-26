@@ -1,0 +1,44 @@
+# Ambiente de desenvolvimento: backend (PHP/Slim) + dashboard (React/Vite).
+#
+#   docker compose up --build
+#
+# Dashboard:  http://localhost:5173   (faz proxy de /api para o backend)
+# Backend:    http://localhost:8080
+#
+# Credenciais padrao: admin / changeme
+
+services:
+  backend:
+    build: ./backend
+    environment:
+      SYNC_USER: admin
+      SYNC_PASSWORD: changeme
+      JWT_SECRET: dev-secret-trocar-em-producao
+      JWT_TTL: "86400"
+      STORAGE_PATH: /data
+      KEEP_VERSIONS: "5"
+      MAX_FILE_SIZE: "0"
+    volumes:
+      - ./backend:/app
+      - /app/vendor # volume anonimo preserva o vendor instalado na imagem
+      - backend-data:/data
+    command: php -S 0.0.0.0:8080 -t public
+    ports:
+      - "8080:8080"
+
+  dashboard:
+    build: ./dashboard
+    environment:
+      # Dentro da rede do compose, o backend e acessivel pelo nome do servico.
+      VITE_PROXY_TARGET: http://backend:8080
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules # volume anonimo preserva o node_modules da imagem
+    command: npm run dev -- --host
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  backend-data:

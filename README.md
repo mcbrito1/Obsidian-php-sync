@@ -7,11 +7,25 @@ por duas partes independentes:
 |-------|------------|-------|
 | **Backend REST** | PHP 8.1+ · Slim Framework 4 | [`backend/`](backend) |
 | **Plugin** | TypeScript · API do Obsidian | [`plugin/`](plugin) |
+| **Dashboard** | React · Vite · `@codemirror/merge` | [`dashboard/`](dashboard) |
 
 O plugin faz uma **sincronização delta de 3 vias** (por hash): envia/baixa apenas
 o que mudou, propaga exclusões e resolve conflitos pela versão mais recente
 (`mtime`). Inclui auto-sync, filtros glob, múltiplos cofres e versionamento no
-servidor.
+servidor. O **dashboard** web exibe o conteúdo dos cofres e oferece um editor de
+**merge estilo Meld** (comparando cofres ou versões).
+
+## Início rápido com Docker (recomendado)
+
+Sobe o backend e o dashboard juntos, com hot-reload:
+
+```bash
+docker compose up --build
+# Dashboard: http://localhost:5173  (login: admin / changeme)
+# Backend:   http://localhost:8080
+```
+
+O Vite faz proxy de `/api` para o backend pela rede do compose (sem CORS).
 
 ## Estrutura de pastas
 
@@ -25,7 +39,7 @@ Obsidian-php-sync/
 │   │   ├── Jwt.php            # JWT HS256 auto-contido (sem dependências)
 │   │   ├── AuthController.php # POST /auth
 │   │   ├── AuthMiddleware.php # Valida o Bearer token
-│   │   ├── SyncController.php # upload/upload-batch/download/manifest/file
+│   │   ├── SyncController.php # upload/batch/download/manifest/versions/file
 │   │   ├── Vaults.php         # Isolamento de múltiplos cofres (X-Vault-Id)
 │   │   └── Storage.php        # I/O com proteção a traversal + versionamento
 │   ├── tests/                # Testes PHPUnit (unitários + integração)
@@ -51,7 +65,18 @@ Obsidian-php-sync/
 │   ├── package.json
 │   └── tsconfig.json
 │
-└── .github/workflows/ci.yml  # CI: testes/lint/build do backend e do plugin
+├── dashboard/                # Dashboard web (React + Vite)
+│   ├── src/
+│   │   ├── api.ts             # Cliente HTTP (auth/manifest/download/upload/versions)
+│   │   ├── auth.ts            # Token JWT no localStorage
+│   │   ├── base64.ts          # base64 ↔ texto
+│   │   └── components/        # Login, VaultInfo, MergeTool (@codemirror/merge)
+│   ├── Dockerfile
+│   ├── vite.config.ts        # proxy /api → backend
+│   └── package.json
+│
+├── docker-compose.yml        # Stack de dev: backend + dashboard (hot-reload)
+└── .github/workflows/ci.yml  # CI: backend, plugin e dashboard
 ```
 
 ## Início rápido
@@ -90,10 +115,11 @@ abra **Configurações → PHP Sync**, preencha URL/usuário/senha, clique em
 ## Testes
 
 ```bash
-cd backend && composer test && composer phpstan    # PHPUnit (44) + PHPStan
-cd plugin  && npm run lint && npm test && npm run build   # ESLint + Vitest (49) + build
+cd backend   && composer test && composer phpstan       # PHPUnit (50) + PHPStan
+cd plugin    && npm run lint && npm test && npm run build   # ESLint + Vitest (49) + build
+cd dashboard && npm run lint && npm test && npm run build   # ESLint + Vitest (12) + build
 ```
 
-CI (GitHub Actions, `.github/workflows/ci.yml`) roda tudo isso em cada PR/push.
+CI (GitHub Actions, `.github/workflows/ci.yml`) roda os 3 conjuntos em cada PR/push.
 
 Detalhes em [`backend/README.md`](backend/README.md) e [`plugin/README.md`](plugin/README.md).

@@ -233,6 +233,67 @@ final class AppTest extends TestCase
         self::assertSame('file_too_large', json_decode((string) $response->getBody(), true)['error']);
     }
 
+    public function testVersionHistoryEndpoints(): void
+    {
+        // App com versionamento habilitado.
+        $config = new Config(
+            username: 'admin',
+            password: 's3cret',
+            jwtSecret: 'test-secret',
+            jwtTtl: 3600,
+            storagePath: $this->storage,
+            keepVersions: 5,
+        );
+        $app = AppFactory::create($config);
+
+        $authReq = (new ServerRequestFactory())->createServerRequest('POST', '/auth')
+            ->withHeader('Content-Type', 'application/json');
+        $authReq->getBody()->write((string) json_encode(['username' => 'admin', 'password' => 's3cret']));
+        $authReq->getBody()->rewind();
+        $token = json_decode((string) $app->handle($authReq)->getBody(), true)['token'];
+
+        $upload = function (string $content) use ($app, $token): void {
+            $req = (new ServerRequestFactory())->createServerRequest('POST', '/upload')
+                ->withHeader('Authorization', 'Bearer ' . $token)
+                ->withHeader('Content-Type', 'application/json');
+            $req->getBody()->write((string) json_encode([
+                'path' => 'nota.md',
+                'content' => base64_encode($content),
+            ]));
+            $req->getBody()->rewind();
+            $app->handle($req);
+        };
+
+        $upload('v1');
+        $upload('v2'); // versiona v1
+
+        $listReq = (new ServerRequestFactory())->createServerRequest('GET', '/versions')
+            ->withHeader('Authorization', 'Bearer ' . $token)
+            ->withQueryParams(['path' => 'nota.md']);
+        $listRes = $app->handle($listReq);
+        self::assertSame(200, $listRes->getStatusCode());
+        $versions = json_decode((string) $listRes->getBody(), true)['versions'];
+        self::assertCount(1, $versions);
+
+        $id = $versions[0]['id'];
+        $getReq = (new ServerRequestFactory())->createServerRequest('GET', '/version')
+            ->withHeader('Authorization', 'Bearer ' . $token)
+            ->withQueryParams(['path' => 'nota.md', 'id' => $id]);
+        $getRes = $app->handle($getReq);
+        self::assertSame(200, $getRes->getStatusCode());
+        $payload = json_decode((string) $getRes->getBody(), true);
+        self::assertSame('v1', base64_decode($payload['content']));
+    }
+
+    public function testVersionMissingReturns404(): void
+    {
+        $token = $this->authenticate();
+
+        $response = $this->dispatch('GET', '/version?path=x.md&id=123.456', null, $token);
+
+        self::assertSame(404, $response->getStatusCode());
+    }
+
     public function testDownloadMissingFileReturns404(): void
     {
         $token = $this->authenticate();

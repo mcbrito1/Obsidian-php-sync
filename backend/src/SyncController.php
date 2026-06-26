@@ -212,6 +212,63 @@ final class SyncController
         ]);
     }
 
+    /**
+     * GET /versions?path=Notas/foo.md
+     * Lista o historico de versoes de um arquivo: { "versions": [ {id,size,mtime}, ... ] }
+     */
+    public function versions(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $path = (string) ($request->getQueryParams()['path'] ?? '');
+        if ($path === '') {
+            return self::json($response, 422, [
+                'error' => 'invalid_request',
+                'message' => 'Parametro "path" e obrigatorio.',
+            ]);
+        }
+
+        try {
+            $versions = $this->storageFor($request)->listVersions($path);
+        } catch (\InvalidArgumentException $e) {
+            return self::json($response, 422, ['error' => 'invalid_path', 'message' => $e->getMessage()]);
+        }
+
+        return self::json($response, 200, ['path' => $path, 'versions' => $versions]);
+    }
+
+    /**
+     * GET /version?path=Notas/foo.md&id=<timestamp>
+     * Resposta: { "path", "id", "content" (base64) }
+     */
+    public function version(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $params = $request->getQueryParams();
+        $path = (string) ($params['path'] ?? '');
+        $id = (string) ($params['id'] ?? '');
+
+        if ($path === '' || $id === '') {
+            return self::json($response, 422, [
+                'error' => 'invalid_request',
+                'message' => 'Parametros "path" e "id" sao obrigatorios.',
+            ]);
+        }
+
+        try {
+            $storage = $this->storageFor($request);
+            $contents = $storage->readVersion($path, $id);
+        } catch (\InvalidArgumentException $e) {
+            return self::json($response, 422, ['error' => 'invalid_path', 'message' => $e->getMessage()]);
+        } catch (\RuntimeException $e) {
+            return self::json($response, 404, ['error' => 'not_found', 'message' => $e->getMessage()]);
+        }
+
+        return self::json($response, 200, [
+            'path' => $path,
+            'id' => $id,
+            'content' => base64_encode($contents),
+            'size' => \strlen($contents),
+        ]);
+    }
+
     /** Resolve o Storage do cofre indicado no header X-Vault-Id (ou "default"). */
     private function storageFor(ServerRequestInterface $request): Storage
     {
