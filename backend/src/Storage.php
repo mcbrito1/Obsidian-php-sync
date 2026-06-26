@@ -95,9 +95,14 @@ final class Storage
             throw new \RuntimeException("Nao foi possivel criar a pasta: {$dir}");
         }
 
-        if (file_put_contents($absolute, $contents) === false) {
+        if (file_put_contents($absolute, $contents, LOCK_EX) === false) {
             throw new \RuntimeException("Falha ao gravar o arquivo: {$relativePath}");
         }
+
+        // Mantem o cache de hashes autoritativo: como o mtime tem resolucao de
+        // 1s, um arquivo reescrito no mesmo segundo (e mesmo tamanho) ficaria com
+        // hash obsoleto; gravar aqui o hash correto evita esse problema.
+        $this->rememberHash($absolute, $contents);
     }
 
     public function exists(string $relativePath): bool
@@ -155,6 +160,8 @@ final class Storage
             throw new \RuntimeException("Falha ao remover o arquivo: {$relativePath}");
         }
 
+        $this->forgetHash($absolute);
+
         return true;
     }
 
@@ -174,7 +181,10 @@ final class Storage
 
         $base = basename($relativePath);
         $stamp = sprintf('%d.%06d', time(), random_int(0, 999999));
-        @copy($absolute, $parent . DIRECTORY_SEPARATOR . $base . '.' . $stamp);
+        $dest = $parent . DIRECTORY_SEPARATOR . $base . '.' . $stamp;
+        if (!copy($absolute, $dest)) {
+            throw new \RuntimeException("Falha ao criar snapshot de: {$relativePath}");
+        }
 
         $this->pruneVersions($parent, $base);
     }
@@ -266,6 +276,9 @@ final class Storage
      * Lista todos os arquivos do cofre como caminhos relativos (com "/"),
      * acompanhados de hash, tamanho e data de modificacao.
      *
+     * Quando $withHash for true, reutiliza um cache de hashes em
+     * `.versions/.hashcache.json` para evitar re-hashar arquivos inalterados.
+     *
      * @param bool $withHash quando true, inclui o sha256 de cada arquivo.
      *
      * @return list<array{path:string,hash:string,size:int,mtime:int}>
@@ -276,6 +289,10 @@ final class Storage
             new \RecursiveDirectoryIterator($this->root, \FilesystemIterator::SKIP_DOTS),
             \RecursiveIteratorIterator::LEAVES_ONLY,
         );
+
+        // Carrega o cache de hashes (somente quando necessario).
+        $hashCache = $withHash ? $this->loadHashCache() : [];
+        $hashCacheChanged = false;
 
         $files = [];
         /** @var \SplFileInfo $file */
@@ -292,16 +309,112 @@ final class Storage
                 continue;
             }
 
+            $size = $file->getSize();
+            $mtime = $file->getMTime();
+
+            $hash = '';
+            if ($withHash) {
+                $cached = $hashCache[$relative] ?? null;
+                if (
+                    $cached !== null
+                    && $cached['mtime'] === $mtime
+                    && $cached['size'] === $size
+                ) {
+                    $hash = $cached['hash'];
+                } else {
+                    $computed = hash_file('sha256', $file->getPathname());
+                    $hash = $computed !== false ? $computed : '';
+                    $hashCache[$relative] = ['mtime' => $mtime, 'size' => $size, 'hash' => $hash];
+                    $hashCacheChanged = true;
+                }
+            }
+
             $files[] = [
                 'path' => $relative,
-                'hash' => $withHash ? (string) hash_file('sha256', $file->getPathname()) : '',
-                'size' => $file->getSize(),
-                'mtime' => $file->getMTime(),
+                'hash' => $hash,
+                'size' => $size,
+                'mtime' => $mtime,
             ];
+        }
+
+        // Persiste o cache atualizado (so quando algo mudou e usamos hashes).
+        if ($withHash && $hashCacheChanged) {
+            $this->saveHashCache($hashCache);
         }
 
         usort($files, static fn (array $a, array $b): int => strcmp($a['path'], $b['path']));
 
         return $files;
+    }
+
+    private function hashCachePath(): string
+    {
+        return $this->root . DIRECTORY_SEPARATOR . self::VERSIONS_DIR
+            . DIRECTORY_SEPARATOR . '.hashcache.json';
+    }
+
+    /** Chave do cache (caminho relativo com "/") a partir do caminho absoluto. */
+    private function cacheKey(string $absolute): string
+    {
+        return str_replace('\\', '/', substr($absolute, \strlen($this->root) + 1));
+    }
+
+    /**
+     * @return array<string,array{mtime:int,size:int,hash:string}>
+     */
+    private function loadHashCache(): array
+    {
+        $path = $this->hashCachePath();
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $raw = file_get_contents($path);
+        if ($raw === false) {
+            return [];
+        }
+
+        /** @var array<string,array{mtime:int,size:int,hash:string}>|null $decoded */
+        $decoded = json_decode($raw, true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @param array<string,array{mtime:int,size:int,hash:string}> $cache
+     */
+    private function saveHashCache(array $cache): void
+    {
+        $dir = $this->root . DIRECTORY_SEPARATOR . self::VERSIONS_DIR;
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            return; // sem diretorio de cache, segue sem cachear
+        }
+
+        file_put_contents($this->hashCachePath(), (string) json_encode($cache), LOCK_EX);
+    }
+
+    /** Atualiza o cache com o hash autoritativo de um arquivo recem-gravado. */
+    private function rememberHash(string $absolute, string $contents): void
+    {
+        clearstatcache(true, $absolute);
+
+        $cache = $this->loadHashCache();
+        $cache[$this->cacheKey($absolute)] = [
+            'mtime' => (int) @filemtime($absolute),
+            'size' => \strlen($contents),
+            'hash' => hash('sha256', $contents),
+        ];
+        $this->saveHashCache($cache);
+    }
+
+    /** Remove um arquivo do cache (apos exclusao). */
+    private function forgetHash(string $absolute): void
+    {
+        $key = $this->cacheKey($absolute);
+        $cache = $this->loadHashCache();
+        if (array_key_exists($key, $cache)) {
+            unset($cache[$key]);
+            $this->saveHashCache($cache);
+        }
     }
 }

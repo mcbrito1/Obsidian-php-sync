@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MergeView } from "@codemirror/merge";
 import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
@@ -36,9 +36,19 @@ export function MergeTool({ currentVaultId }: Props) {
     const [error, setError] = useState("");
     const [status, setStatus] = useState("");
     const [loaded, setLoaded] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const mergeRef = useRef<MergeView | null>(null);
+
+    // Destrói o MergeView ao desmontar (evita vazamento de memória).
+    useEffect(() => {
+        return () => {
+            mergeRef.current?.destroy();
+            mergeRef.current = null;
+        };
+    }, []);
 
     async function loadSideContent(side: MergeSide): Promise<string> {
         if (side.type === "version") {
@@ -55,6 +65,7 @@ export function MergeTool({ currentVaultId }: Props) {
             setError("Informe o caminho do arquivo.");
             return;
         }
+        setLoading(true);
         try {
             const [docA, docB] = await Promise.all([
                 loadSideContent(sideA),
@@ -77,6 +88,8 @@ export function MergeTool({ currentVaultId }: Props) {
             setLoaded(true);
         } catch (err) {
             setError(err instanceof ApiError ? err.message : "Falha ao carregar os lados.");
+        } finally {
+            setLoading(false);
         }
     }
 
@@ -84,12 +97,15 @@ export function MergeTool({ currentVaultId }: Props) {
         if (!mergeRef.current) return;
         setError("");
         setStatus("");
+        setSaving(true);
         const merged = mergeRef.current.b.state.doc.toString();
         try {
             await uploadText(path, merged, targetVault || "default");
             setStatus(`Salvo em "${targetVault || "default"}" / ${path}.`);
         } catch (err) {
             setError(err instanceof ApiError ? err.message : "Falha ao salvar.");
+        } finally {
+            setSaving(false);
         }
     }
 
@@ -169,7 +185,9 @@ export function MergeTool({ currentVaultId }: Props) {
                     placeholder="Notas/exemplo.md"
                     style={{ width: 320 }}
                 />
-                <button onClick={() => void handleLoad()}>Carregar</button>
+                <button onClick={() => void handleLoad()} disabled={loading}>
+                    {loading ? "Carregando…" : "Carregar"}
+                </button>
             </div>
 
             <div className="row" style={{ alignItems: "stretch" }}>
@@ -193,7 +211,9 @@ export function MergeTool({ currentVaultId }: Props) {
                         style={{ width: 110 }}
                     />
                     <span className="mono">/ {path}</span>
-                    <button onClick={() => void handleSave()}>Salvar</button>
+                    <button onClick={() => void handleSave()} disabled={saving}>
+                        {saving ? "Salvando…" : "Salvar"}
+                    </button>
                 </div>
             )}
         </>

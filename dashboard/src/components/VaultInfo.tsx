@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, downloadText, fetchManifest } from "../api";
+import { ApiError, downloadRaw, fetchManifest } from "../api";
 import { RemoteFile } from "../types";
 
 function formatBytes(bytes: number): string {
@@ -45,7 +45,8 @@ export function VaultInfo({ vaultId }: Props) {
         setSelected(path);
         setPreview("Carregando…");
         try {
-            setPreview(await downloadText(path, vaultId));
+            const { text, isBinary } = await downloadRaw(path, vaultId);
+            setPreview(isBinary ? "(arquivo binário — preview indisponível)" : text);
         } catch (err) {
             setPreview(err instanceof ApiError ? err.message : "Falha ao baixar o arquivo.");
         }

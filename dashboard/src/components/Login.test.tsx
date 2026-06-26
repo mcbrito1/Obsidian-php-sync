@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Login } from "./Login";
 import { getToken } from "../auth";
@@ -35,7 +35,7 @@ describe("Login", () => {
         await userEvent.type(screen.getByLabelText("Senha"), "s3cret");
         await userEvent.click(screen.getByRole("button", { name: /entrar/i }));
 
-        expect(onLoggedIn).toHaveBeenCalledOnce();
+        await waitFor(() => expect(onLoggedIn).toHaveBeenCalledOnce());
         expect(getToken()).toBe("jwt");
     });
 

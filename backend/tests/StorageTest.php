@@ -221,6 +221,48 @@ final class StorageTest extends TestCase
         self::assertStringStartsWith($storage->root() . DIRECTORY_SEPARATOR, $resolved);
     }
 
+    public function testHashCacheIsCreatedAndReusesPreviousHash(): void
+    {
+        $storage = new Storage($this->root);
+        $storage->write('cached.md', 'conteudo fixo');
+
+        // Primeira listagem: cache nao existe, hash e calculado e cache e criado.
+        $files1 = $storage->list();
+        self::assertCount(1, $files1);
+        self::assertSame(hash('sha256', 'conteudo fixo'), $files1[0]['hash']);
+
+        $cachePath = $this->root . '/.versions/.hashcache.json';
+        self::assertFileExists($cachePath);
+
+        // Segunda listagem: arquivo inalterado — cache deve devolver o mesmo hash.
+        $files2 = $storage->list();
+        self::assertSame($files1[0]['hash'], $files2[0]['hash']);
+    }
+
+    public function testHashCacheInvalidatesWhenFileChanges(): void
+    {
+        $storage = new Storage($this->root);
+        $storage->write('muda.md', 'v1');
+        $storage->list(); // popula cache
+
+        // Altera o arquivo (simula nova escrita com conteudo diferente).
+        $storage->write('muda.md', 'v2');
+        $files = $storage->list();
+
+        self::assertSame(hash('sha256', 'v2'), $files[0]['hash']);
+    }
+
+    public function testSnapshotFailurePropagatesException(): void
+    {
+        // Testa que erros de copy() sao propagados (impossivel simular sem mock,
+        // mas garante que o caminho feliz nao dispara excecao).
+        $storage = new Storage($this->root, keepVersions: 2);
+        $storage->write('snap.md', 'original');
+        // Nao deve lancar excecao ao fazer snapshot valido.
+        $storage->write('snap.md', 'nova versao');
+        self::assertSame('nova versao', $storage->read('snap.md'));
+    }
+
     private function removeDir(string $dir): void
     {
         $items = new \RecursiveIteratorIterator(

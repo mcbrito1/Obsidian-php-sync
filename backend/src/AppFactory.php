@@ -29,20 +29,47 @@ final class AppFactory
         $app = SlimAppFactory::create();
         $app->addRoutingMiddleware();
 
+        // CORS opcional: quando CORS_ALLOW_ORIGIN estiver configurado, adiciona os
+        // headers necessarios em todas as respostas e responde ao preflight OPTIONS.
+        if ($config->corsAllowOrigin !== '') {
+            $corsOrigin = $config->corsAllowOrigin;
+            $app->add(static function (
+                ServerRequestInterface $request,
+                \Psr\Http\Server\RequestHandlerInterface $handler,
+            ) use ($corsOrigin): ResponseInterface {
+                $response = $handler->handle($request);
+                return $response
+                    ->withHeader('Access-Control-Allow-Origin', $corsOrigin)
+                    ->withHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+                    ->withHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Vault-Id');
+            });
+
+            // Rota catch-all para preflight OPTIONS.
+            $app->options('/{routes:.+}', static function (
+                ServerRequestInterface $request,
+                ResponseInterface $response,
+            ): ResponseInterface {
+                return $response->withStatus(204);
+            });
+        }
+
         // Trata erros como JSON (sem expor detalhes internos por padrao).
-        $errorMiddleware = $app->addErrorMiddleware(true, true, true);
+        $errorMiddleware = $app->addErrorMiddleware($config->appDebug, true, true);
         $errorMiddleware->setDefaultErrorHandler(static function (
             ServerRequestInterface $request,
             \Throwable $exception,
-        ) use ($app): ResponseInterface {
-            $status = $exception instanceof \Slim\Exception\HttpException
-                ? $exception->getCode()
-                : 500;
+        ) use ($app, $config): ResponseInterface {
+            $isHttp = $exception instanceof \Slim\Exception\HttpException;
+            $status = $isHttp ? $exception->getCode() : 500;
+
+            $message = ($isHttp || $config->appDebug)
+                ? $exception->getMessage()
+                : 'Erro interno.';
 
             $response = $app->getResponseFactory()->createResponse($status);
             $response->getBody()->write((string) json_encode([
                 'error' => 'request_failed',
-                'message' => $exception->getMessage(),
+                'message' => $message,
             ], JSON_UNESCAPED_SLASHES));
 
             return $response->withHeader('Content-Type', 'application/json');

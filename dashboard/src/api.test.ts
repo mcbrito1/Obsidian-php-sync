@@ -6,6 +6,7 @@ import {
     downloadText,
     uploadText,
     fetchVersions,
+    UNAUTHORIZED_EVENT,
 } from "./api";
 import { getToken, setToken } from "./auth";
 import { textToBase64 } from "./base64";
@@ -106,5 +107,17 @@ describe("rotas autenticadas", () => {
         fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: "not_found", message: "nao existe" }));
 
         await expect(downloadText("x.md", "default")).rejects.toBeInstanceOf(ApiError);
+    });
+
+    it("em 401 limpa o token e emite o evento de logout", async () => {
+        const onUnauthorized = vi.fn();
+        window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+        fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: "unauthorized" }));
+
+        await expect(fetchManifest("default")).rejects.toMatchObject({ status: 401 });
+
+        expect(getToken()).toBe("");
+        expect(onUnauthorized).toHaveBeenCalledOnce();
+        window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     });
 });

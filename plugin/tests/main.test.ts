@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createHash } from "node:crypto";
-import PhpSyncPlugin from "../main";
+// Importa o fonte explicitamente para não resolver para o bundle main.js gerado pelo build.
+import PhpSyncPlugin from "../main.ts";
 import { SyncClient } from "../src/SyncClient";
 import { HttpRequestFn } from "../src/types";
 import { TFile } from "./__mocks__/obsidian";
@@ -12,8 +13,10 @@ const enc = (s: string) => new TextEncoder().encode(s);
 function inMemoryServer(initial: Record<string, string> = {}): {
     fn: HttpRequestFn;
     store: Map<string, Uint8Array>;
+    calls: string[];
 } {
     const store = new Map<string, Uint8Array>();
+    const calls: string[] = [];
     for (const [p, c] of Object.entries(initial)) store.set(p, enc(c));
 
     const json = (status: number, body: unknown) => ({
@@ -27,6 +30,7 @@ function inMemoryServer(initial: Record<string, string> = {}): {
         const u = new URL(opts.url);
         const path = u.pathname;
         const query = u.searchParams.get("path") ?? "";
+        calls.push(`${opts.method ?? "GET"} ${path}`);
 
         if (path === "/manifest" || path === "/list") {
             const files = [...store.entries()].map(([p, data]) => ({
@@ -42,6 +46,15 @@ function inMemoryServer(initial: Record<string, string> = {}): {
             store.set(body.path, new Uint8Array(Buffer.from(body.content, "base64")));
             return json(200, { status: "ok" });
         }
+        if (path === "/upload-batch" && opts.method === "POST") {
+            const body = JSON.parse(opts.body as string) as {
+                files: { path: string; content: string }[];
+            };
+            for (const f of body.files) {
+                store.set(f.path, new Uint8Array(Buffer.from(f.content, "base64")));
+            }
+            return json(200, { status: "ok", files: body.files.map((f) => ({ path: f.path })) });
+        }
         if (path === "/download") {
             const data = store.get(query);
             if (!data) return json(404, { error: "not_found" });
@@ -54,7 +67,7 @@ function inMemoryServer(initial: Record<string, string> = {}): {
         return json(404, { error: "unknown" });
     };
 
-    return { fn, store };
+    return { fn, store, calls };
 }
 
 /** Cofre local em memória que implementa o subconjunto usado de `vault`. */
@@ -63,9 +76,10 @@ function fakeVault(initial: Record<string, string> = {}) {
     for (const [p, c] of Object.entries(initial)) files.set(p, { data: enc(c), mtime: 0 });
 
     const toTFile = (path: string): TFile => {
+        const entry = files.get(path);
         const f = new TFile();
         f.path = path;
-        f.stat = { mtime: files.get(path)?.mtime ?? 0, ctime: 0, size: 0 };
+        f.stat = { mtime: entry?.mtime ?? 0, ctime: 0, size: entry?.data.length ?? 0 };
         return f;
     };
 
@@ -108,6 +122,7 @@ function makePlugin(
         excludePatterns: "",
         includePatterns: "",
         lastSync,
+        hashCache: {},
     };
     plugin.client = new SyncClient(server.fn, "http://server", "tkn");
     plugin.saveData = vi.fn(async () => {});
@@ -166,5 +181,35 @@ describe("runSync (orquestração end-to-end em memória)", () => {
         await plugin.runSync();
 
         expect(server.store.has("d.md")).toBe(false);
+    });
+
+    it("não re-hasha arquivos inalterados no segundo sync (cache de hash)", async () => {
+        const server = inMemoryServer();
+        const vault = fakeVault({ "a.md": "estável" });
+        const { plugin } = makePlugin(server, vault);
+        const spy = vi.spyOn(vault, "readBinary");
+
+        await plugin.runSync();
+        expect(plugin.settings.hashCache["a.md"]).toBeDefined();
+        expect(spy.mock.calls.length).toBeGreaterThan(0);
+
+        // Nada mudou localmente nem no servidor → segundo sync não lê o arquivo.
+        spy.mockClear();
+        await plugin.runSync();
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("usa /upload-batch para enviar (em lote)", async () => {
+        const server = inMemoryServer();
+        const vault = fakeVault({ "a.md": "A", "b.md": "B" });
+        const { plugin } = makePlugin(server, vault);
+
+        await plugin.runSync();
+
+        // Ambos os arquivos chegaram via uma única chamada batch (sem /upload single).
+        expect(server.store.has("a.md")).toBe(true);
+        expect(server.store.has("b.md")).toBe(true);
+        expect(server.calls).toContain("POST /upload-batch");
+        expect(server.calls).not.toContain("POST /upload");
     });
 });

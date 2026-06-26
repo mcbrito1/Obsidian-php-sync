@@ -17,6 +17,7 @@ import { sha256 } from "./src/hash";
 import { parsePatterns, shouldSync } from "./src/filter";
 import {
     DEFAULT_SETTINGS,
+    HashCacheEntry,
     HttpRequestFn,
     PluginSettings,
 } from "./src/types";
@@ -97,6 +98,8 @@ export default class PhpSyncPlugin extends Plugin {
         // Auto-sync ao alterar arquivos (com debounce de 5s).
         this.debouncedSync = debounce(() => void this.runSync(), 5000, true);
         const onChange = () => {
+            // Ignora eventos gerados pelas próprias escritas do sync (evita loop).
+            if (this.syncing) return;
             if (this.settings.syncOnChange) this.debouncedSync?.();
         };
         this.registerEvent(this.app.vault.on("modify", onChange));
@@ -178,16 +181,32 @@ export default class PhpSyncPlugin extends Plugin {
                 .filter((file) => keep(file.path));
             const byPath = new Map(localFiles.map((file) => [file.path, file]));
 
-            // Metadados locais (hash + mtime) e remotos (manifesto), ambos filtrados.
+            // Metadados locais (hash + mtime), reutilizando o cache para não
+            // re-hashar arquivos cujo mtime e tamanho não mudaram.
             const localMeta: FileMeta[] = [];
+            const nextHashCache: Record<string, HashCacheEntry> = {};
             for (const file of localFiles) {
-                const buffer = await this.app.vault.readBinary(file);
-                localMeta.push({
-                    path: file.path,
-                    hash: await sha256(buffer),
+                const cached = this.settings.hashCache[file.path];
+                let hash: string;
+                if (
+                    cached &&
+                    cached.mtime === file.stat.mtime &&
+                    cached.size === file.stat.size
+                ) {
+                    hash = cached.hash;
+                } else {
+                    const buffer = await this.app.vault.readBinary(file);
+                    hash = await sha256(buffer);
+                }
+                nextHashCache[file.path] = {
                     mtime: file.stat.mtime,
-                });
+                    size: file.stat.size,
+                    hash,
+                };
+                localMeta.push({ path: file.path, hash, mtime: file.stat.mtime });
             }
+            // Substitui o cache (descartando entradas de arquivos que sumiram).
+            this.settings.hashCache = nextHashCache;
 
             const remoteFiles = await this.client.manifest();
             const remoteMeta: FileMeta[] = remoteFiles
@@ -204,13 +223,19 @@ export default class PhpSyncPlugin extends Plugin {
             let done = 0;
             const tick = () => this.setStatus(`PHP Sync: ${++done}/${total}`);
 
-            // Aplica o plano.
-            for (const path of plan.toUpload) {
-                const file = byPath.get(path);
-                if (!file) continue;
-                const buffer = await this.app.vault.readBinary(file);
-                await this.client.upload(path, arrayBufferToBase64(buffer));
-                tick();
+            // Aplica o plano. Uploads vão em lotes (menos requisições).
+            const UPLOAD_BATCH = 25;
+            for (let i = 0; i < plan.toUpload.length; i += UPLOAD_BATCH) {
+                const slice = plan.toUpload.slice(i, i + UPLOAD_BATCH);
+                const payload: { path: string; content: string }[] = [];
+                for (const path of slice) {
+                    const file = byPath.get(path);
+                    if (!file) continue;
+                    const buffer = await this.app.vault.readBinary(file);
+                    payload.push({ path, content: arrayBufferToBase64(buffer) });
+                }
+                await this.client.uploadBatch(payload);
+                payload.forEach(() => tick());
             }
             for (const path of plan.toDownload) {
                 const contentBase64 = await this.client.download(path);

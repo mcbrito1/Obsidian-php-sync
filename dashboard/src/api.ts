@@ -1,6 +1,9 @@
-import { getToken, setToken } from "./auth";
-import { base64ToText, textToBase64 } from "./base64";
+import { clearToken, getToken, setToken } from "./auth";
+import { base64ToText, isProbablyTextBase64, textToBase64 } from "./base64";
 import { RemoteFile, VersionEntry } from "./types";
+
+/** Evento global emitido quando o token expira/é rejeitado (401). */
+export const UNAUTHORIZED_EVENT = "ophp:unauthorized";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -43,6 +46,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
     const data = await response.json().catch(() => null);
     if (!response.ok) {
+        // Token expirado/inválido: limpa a sessão e sinaliza logout à UI.
+        if (response.status === 401 && auth) {
+            clearToken();
+            window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+        }
         const message =
             (data && (data.message || data.error)) || `Erro ${response.status}`;
         throw new ApiError(message, response.status);
@@ -72,6 +80,19 @@ export async function downloadText(path: string, vaultId: string): Promise<strin
         { vaultId },
     );
     return base64ToText(data.content);
+}
+
+/** Baixa um arquivo detectando se é binário (para evitar preview de lixo). */
+export async function downloadRaw(
+    path: string,
+    vaultId: string,
+): Promise<{ text: string; isBinary: boolean }> {
+    const data = await request<{ content: string }>(
+        `/download?path=${encodeURIComponent(path)}`,
+        { vaultId },
+    );
+    const isText = isProbablyTextBase64(data.content);
+    return { text: isText ? base64ToText(data.content) : "", isBinary: !isText };
 }
 
 export async function uploadText(

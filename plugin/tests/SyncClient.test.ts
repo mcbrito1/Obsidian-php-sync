@@ -114,6 +114,29 @@ describe("SyncClient rotas protegidas", () => {
         });
     });
 
+    it("uploadBatch envia todos os arquivos em uma requisição", async () => {
+        const { fn, calls } = fakeHttp(() => jsonResponse(200, { status: "ok", files: [] }));
+        const client = new SyncClient(fn, "http://localhost:8080", "t");
+
+        await client.uploadBatch([
+            { path: "a.md", content: "QQ==" },
+            { path: "b.md", content: "Qg==" },
+        ]);
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].url).toBe("http://localhost:8080/upload-batch");
+        expect(JSON.parse(calls[0].body as string).files).toHaveLength(2);
+    });
+
+    it("uploadBatch não faz requisição para lista vazia", async () => {
+        const { fn, calls } = fakeHttp(() => jsonResponse(200, {}));
+        const client = new SyncClient(fn, "http://localhost:8080", "t");
+
+        await client.uploadBatch([]);
+
+        expect(calls).toHaveLength(0);
+    });
+
     it("upload propaga erro do servidor", async () => {
         const { fn } = fakeHttp(() =>
             jsonResponse(422, { error: "invalid_path", message: "Travessia nao permitida." }),

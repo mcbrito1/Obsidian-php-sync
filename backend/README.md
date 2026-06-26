@@ -36,8 +36,14 @@ docker run -p 8080:8080 -v "$PWD/data:/data" \
 | `STORAGE_PATH` | `backend/storage` | Onde os arquivos são salvos |
 | `MAX_FILE_SIZE` | `0` | Tamanho máximo por arquivo em bytes (0 = ilimitado) |
 | `KEEP_VERSIONS` | `0` | Versões anteriores a manter por arquivo (0 = desativado) |
+| `APP_DEBUG` | `false` | Quando `true`, expõe mensagens de erro internas (não use em produção) |
+| `CORS_ALLOW_ORIGIN` | *(vazio)* | Quando definido, habilita CORS para essa origem (preflight incluído) |
 
 As variáveis podem vir do ambiente ou de um arquivo `.env` na raiz do backend.
+
+> **CORS:** em desenvolvimento o dashboard usa o proxy do Vite (mesma origem), então
+> `CORS_ALLOW_ORIGIN` fica vazio. Defina-o apenas se for servir o dashboard *buildado*
+> a partir de outra origem.
 
 ## Endpoints
 

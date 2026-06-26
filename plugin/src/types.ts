@@ -4,6 +4,13 @@ export interface SyncStateEntry {
     mtime: number;
 }
 
+/** Entrada do cache de hash local (evita re-hashar arquivos inalterados). */
+export interface HashCacheEntry {
+    mtime: number;
+    size: number;
+    hash: string;
+}
+
 /** Configuracoes persistidas do plugin. */
 export interface PluginSettings {
     serverUrl: string;
@@ -25,6 +32,8 @@ export interface PluginSettings {
     includePatterns: string;
     /** Estado do ultimo sync, por caminho — base para detectar deltas e delecoes. */
     lastSync: Record<string, SyncStateEntry>;
+    /** Cache de hash por caminho (mtime+size) para nao re-hashar arquivos inalterados. */
+    hashCache: Record<string, HashCacheEntry>;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -39,6 +48,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     excludePatterns: ".obsidian/\n.trash/",
     includePatterns: "",
     lastSync: {},
+    hashCache: {},
 };
 
 /** Resposta esperada do endpoint POST /auth. */

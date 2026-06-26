@@ -36,7 +36,7 @@ final class SyncController
         $data = self::parseBody($request);
 
         $result = $this->writeOne($storage, $data);
-        if (isset($result['error'])) {
+        if ($result['error']) {
             return self::json($response, $result['status'], $result['body']);
         }
 
@@ -74,7 +74,7 @@ final class SyncController
                 ]);
             }
             $result = $this->writeOne($storage, $entry);
-            if (isset($result['error'])) {
+            if ($result['error']) {
                 return self::json($response, $result['status'], $result['body']);
             }
             $results[] = $result['body'];
@@ -84,11 +84,10 @@ final class SyncController
     }
 
     /**
-     * Valida e grava um unico arquivo. Retorna um array com 'body' e, em caso
-     * de falha, 'error' + 'status'.
+     * Valida e grava um unico arquivo. Retorna um array com 'body', 'error' (bool) e 'status'.
      *
      * @param array<string,mixed> $data
-     * @return array{body:array<string,mixed>,error?:bool,status?:int}
+     * @return array{body:array<string,mixed>,error:bool,status:int}
      */
     private function writeOne(Storage $storage, array $data): array
     {
@@ -132,7 +131,7 @@ final class SyncController
             ]];
         }
 
-        return ['body' => ['status' => 'ok', 'path' => $path, 'size' => \strlen($decoded)]];
+        return ['error' => false, 'status' => 200, 'body' => ['status' => 'ok', 'path' => $path, 'size' => \strlen($decoded)]];
     }
 
     /**

@@ -9,6 +9,21 @@ const proxyTarget = process.env.VITE_PROXY_TARGET ?? "http://localhost:8080";
 
 export default defineConfig({
     plugins: [react()],
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    // Separa o CodeMirror (pesado) num chunk próprio.
+                    codemirror: [
+                        "@codemirror/merge",
+                        "@codemirror/state",
+                        "@codemirror/view",
+                        "@codemirror/lang-markdown",
+                    ],
+                },
+            },
+        },
+    },
     server: {
         host: true,
         port: 5173,

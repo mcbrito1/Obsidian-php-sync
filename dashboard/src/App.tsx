@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Login } from "./components/Login";
 import { VaultInfo } from "./components/VaultInfo";
 import { MergeTool } from "./components/MergeTool";
 import { clearToken, isLoggedIn } from "./auth";
+import { UNAUTHORIZED_EVENT } from "./api";
 
 type Tab = "vault" | "merge";
 
@@ -10,6 +11,13 @@ export function App() {
     const [loggedIn, setLoggedIn] = useState(isLoggedIn());
     const [tab, setTab] = useState<Tab>("vault");
     const [vaultId, setVaultId] = useState("default");
+
+    // Quando a API sinaliza 401 (token expirado), volta à tela de login.
+    useEffect(() => {
+        const onUnauthorized = () => setLoggedIn(false);
+        window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+        return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    }, []);
 
     if (!loggedIn) {
         return <Login onLoggedIn={() => setLoggedIn(true)} />;

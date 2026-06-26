@@ -110,6 +110,26 @@ export class SyncClient {
         }
     }
 
+    /** Envia varios arquivos numa unica requisicao (POST /upload-batch). */
+    async uploadBatch(files: { path: string; content: string }[]): Promise<void> {
+        if (files.length === 0) return;
+
+        const response = await this.authedRequest({
+            url: this.url("/upload-batch"),
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ files }),
+            throw: false,
+        });
+
+        if (response.status !== 200) {
+            throw new SyncError(
+                this.messageFrom(response, "Falha ao enviar arquivos em lote."),
+                response.status,
+            );
+        }
+    }
+
     /** Lista os arquivos disponiveis no servidor. */
     async list(): Promise<RemoteFile[]> {
         return this.fetchManifest("/list");

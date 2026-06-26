@@ -21,6 +21,8 @@ final class Config
         public readonly string $storagePath,
         public readonly int $maxFileSize = 0,
         public readonly int $keepVersions = 0,
+        public readonly bool $appDebug = false,
+        public readonly string $corsAllowOrigin = '',
     ) {
     }
 
@@ -50,6 +52,8 @@ final class Config
             storagePath: $get('STORAGE_PATH', $defaultStorage),
             maxFileSize: (int) $get('MAX_FILE_SIZE', '0'),
             keepVersions: (int) $get('KEEP_VERSIONS', '0'),
+            appDebug: in_array(strtolower($get('APP_DEBUG', 'false')), ['true', '1', 'yes'], true),
+            corsAllowOrigin: $get('CORS_ALLOW_ORIGIN', ''),
         );
     }
 }
