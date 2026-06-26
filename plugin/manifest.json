@@ -1,0 +1,10 @@
+{
+    "id": "obsidian-php-sync",
+    "name": "PHP Sync",
+    "version": "1.0.0",
+    "minAppVersion": "1.4.0",
+    "description": "Sincroniza o seu cofre com um backend REST simples em PHP (Slim 4) via upload/download.",
+    "author": "obsidian-php-sync",
+    "authorUrl": "https://github.com/mcbrito1/obsidian-php-sync",
+    "isDesktopOnly": false
+}
