@@ -58,6 +58,10 @@ As variáveis podem vir do ambiente ou de um arquivo `.env` na raiz do backend.
 | `GET` | `/versions?path=…` | Bearer | Histórico: `{versions:[{id,size,mtime}]}` |
 | `GET` | `/version?path=…&id=…` | Bearer | Conteúdo de uma versão (`{content (base64)}`) |
 | `DELETE` | `/file?path=…` | Bearer | Remove um arquivo (idempotente) |
+| `GET` | `/vaults` | Bearer | Lista os cofres visíveis ao usuário (`{vaults:[...]}`) |
+| `POST` | `/vaults` | Bearer (admin) | Cria um cofre (`{id}`) |
+| `PUT` | `/vaults/{id}` | Bearer (admin) | Renomeia um cofre (`{newId}`) |
+| `DELETE` | `/vaults/{id}` | Bearer (admin) | Exclui um cofre e seu conteúdo |
 
 Rotas protegidas exigem o header `Authorization: Bearer <token>`.
 
@@ -65,7 +69,27 @@ Rotas protegidas exigem o header `Authorization: Bearer <token>`.
 
 Envie o header `X-Vault-Id: <id>` para isolar o conteúdo em subdiretórios
 (`STORAGE_PATH/<id>/...`). Sem o header, usa-se o cofre `default`. Ids válidos:
-`[A-Za-z0-9._-]` (sem `..`).
+`[A-Za-z0-9._-]` (sem `..`). Os cofres podem ser **listados** (`GET /vaults`) e
+**gerenciados** (`POST`/`PUT`/`DELETE /vaults`).
+
+### Usuários e escopo por cofre
+
+Sem `USERS_FILE`, há um único usuário (`SYNC_USER`/`SYNC_PASSWORD`) com acesso a
+**todos** os cofres (escopo `"*"`, equivalente a administrador).
+
+Com `USERS_FILE` apontando para um JSON, é possível ter vários usuários, cada um
+com acesso a um subconjunto de cofres:
+
+```json
+{
+  "admin": { "password": "troque", "vaults": "*" },
+  "alice": { "password": "troque", "vaults": ["pessoal", "trabalho"] }
+}
+```
+
+- O token JWT carrega o escopo (`vaults`). Acessar um cofre fora do escopo retorna
+  **403**; `GET /vaults` mostra apenas os cofres permitidos.
+- Criar/renomear/excluir cofres exige escopo `"*"` (admin) — caso contrário, **403**.
 
 ### Versionamento (soft-delete)
 

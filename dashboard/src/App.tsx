@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Login } from "./components/Login";
 import { VaultInfo } from "./components/VaultInfo";
+import { VaultManager } from "./components/VaultManager";
 import { MergeTool } from "./components/MergeTool";
 import { clearToken, isLoggedIn } from "./auth";
 import { UNAUTHORIZED_EVENT } from "./api";
@@ -27,16 +28,7 @@ export function App() {
         <>
             <header className="app-header">
                 <h1>Obsidian PHP Sync — Dashboard</h1>
-                <label className="mono">
-                    Cofre:&nbsp;
-                    <input
-                        aria-label="Cofre"
-                        value={vaultId}
-                        onChange={(e) => setVaultId(e.target.value.trim())}
-                        placeholder="default"
-                        style={{ width: 120 }}
-                    />
-                </label>
+                <VaultManager vaultId={vaultId} onChange={setVaultId} />
                 <div className="tabs">
                     <button
                         className={tab === "vault" ? "active" : ""}

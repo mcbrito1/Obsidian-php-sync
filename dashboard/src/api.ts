@@ -1,4 +1,4 @@
-import { clearToken, getToken, setToken } from "./auth";
+import { clearToken, getToken, setAdmin, setToken } from "./auth";
 import { base64ToText, isProbablyTextBase64, textToBase64 } from "./base64";
 import { RemoteFile, VersionEntry } from "./types";
 
@@ -60,13 +60,32 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 export async function login(username: string, password: string): Promise<string> {
-    const data = await request<{ token: string }>("/auth", {
+    const data = await request<{ token: string; vaults?: string[] | string }>("/auth", {
         method: "POST",
         body: { username, password },
         auth: false,
     });
     setToken(data.token);
+    setAdmin(data.vaults === "*");
     return data.token;
+}
+
+/** Lista os cofres visíveis ao usuário autenticado. */
+export async function fetchVaults(): Promise<string[]> {
+    const data = await request<{ vaults: string[] }>("/vaults");
+    return data.vaults ?? [];
+}
+
+export async function createVault(id: string): Promise<void> {
+    await request("/vaults", { method: "POST", body: { id } });
+}
+
+export async function renameVault(id: string, newId: string): Promise<void> {
+    await request(`/vaults/${encodeURIComponent(id)}`, { method: "PUT", body: { newId } });
+}
+
+export async function deleteVault(id: string): Promise<void> {
+    await request(`/vaults/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function fetchManifest(vaultId: string): Promise<RemoteFile[]> {

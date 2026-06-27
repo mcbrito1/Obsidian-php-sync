@@ -23,6 +23,7 @@ final class Config
         public readonly int $keepVersions = 0,
         public readonly bool $appDebug = false,
         public readonly string $corsAllowOrigin = '',
+        public readonly string $usersFile = '',
     ) {
     }
 
@@ -54,6 +55,7 @@ final class Config
             keepVersions: (int) $get('KEEP_VERSIONS', '0'),
             appDebug: in_array(strtolower($get('APP_DEBUG', 'false')), ['true', '1', 'yes'], true),
             corsAllowOrigin: $get('CORS_ALLOW_ORIGIN', ''),
+            usersFile: $get('USERS_FILE', ''),
         );
     }
 }

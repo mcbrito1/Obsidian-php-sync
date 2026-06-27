@@ -40,7 +40,7 @@ final class AppFactory
                 $response = $handler->handle($request);
                 return $response
                     ->withHeader('Access-Control-Allow-Origin', $corsOrigin)
-                    ->withHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+                    ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
                     ->withHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Vault-Id');
             });
 
@@ -75,9 +75,12 @@ final class AppFactory
             return $response->withHeader('Content-Type', 'application/json');
         });
 
-        $auth = new AuthController($config, $jwt);
+        $users = Users::fromConfig($config);
+        $auth = new AuthController($config, $jwt, $users);
         $sync = new SyncController($vaults, $config->maxFileSize);
+        $vaultCtrl = new VaultController($vaults);
         $authMiddleware = new AuthMiddleware($jwt);
+        $vaultAccess = new VaultAccessMiddleware($vaults);
 
         // Healthcheck publico.
         $app->get('/health', static function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
@@ -90,15 +93,24 @@ final class AppFactory
         $app->post('/auth', [$auth, 'login']);
 
         // Rotas protegidas por Bearer token.
-        $app->group('', static function (RouteCollectorProxy $group) use ($sync): void {
-            $group->post('/upload', [$sync, 'upload']);
-            $group->post('/upload-batch', [$sync, 'uploadBatch']);
-            $group->get('/download', [$sync, 'download']);
-            $group->get('/list', [$sync, 'list']);
-            $group->get('/manifest', [$sync, 'list']);
-            $group->get('/versions', [$sync, 'versions']);
-            $group->get('/version', [$sync, 'version']);
-            $group->delete('/file', [$sync, 'delete']);
+        $app->group('', static function (RouteCollectorProxy $group) use ($sync, $vaultCtrl, $vaultAccess): void {
+            // Rotas que operam sobre um cofre (header X-Vault-Id): exigem acesso ao cofre.
+            $group->group('', static function (RouteCollectorProxy $data) use ($sync): void {
+                $data->post('/upload', [$sync, 'upload']);
+                $data->post('/upload-batch', [$sync, 'uploadBatch']);
+                $data->get('/download', [$sync, 'download']);
+                $data->get('/list', [$sync, 'list']);
+                $data->get('/manifest', [$sync, 'list']);
+                $data->get('/versions', [$sync, 'versions']);
+                $data->get('/version', [$sync, 'version']);
+                $data->delete('/file', [$sync, 'delete']);
+            })->add($vaultAccess);
+
+            // Gestao de cofres (listagem filtrada por escopo; mutacoes admin-only).
+            $group->get('/vaults', [$vaultCtrl, 'index']);
+            $group->post('/vaults', [$vaultCtrl, 'create']);
+            $group->put('/vaults/{id}', [$vaultCtrl, 'rename']);
+            $group->delete('/vaults/{id}', [$vaultCtrl, 'delete']);
         })->add($authMiddleware);
 
         return $app;

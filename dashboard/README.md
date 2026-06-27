@@ -6,8 +6,11 @@ visualmente (estilo Meld), conversando com o [backend](../backend).
 ## Recursos
 
 - **Login** com usuário/senha (mesmo `POST /auth`); o JWT fica no `localStorage`.
-- **Vault**: seletor de cofre, estatísticas (nº de arquivos, tamanho total, última
-  modificação), tabela com `path / tamanho / data / hash` e preview do conteúdo.
+- **Cofres**: seletor (dropdown) populado por `GET /vaults` — mostra apenas os cofres
+  permitidos ao usuário. Administradores (escopo `"*"`) podem **criar, renomear e
+  excluir** cofres ali mesmo.
+- **Vault**: estatísticas (nº de arquivos, tamanho total, última modificação),
+  tabela com `path / tamanho / data / hash` e preview do conteúdo.
 - **Merge (estilo Meld)** com [`@codemirror/merge`](https://www.npmjs.com/package/@codemirror/merge):
   colunas lado a lado, chunks com aceitar/rejeitar e edição inline. Cada lado pode vir de:
   - um **cofre** (`X-Vault-Id`) — compara o mesmo arquivo entre dois cofres; ou

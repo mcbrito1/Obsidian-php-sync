@@ -40,7 +40,9 @@ Obsidian-php-sync/
 │   │   ├── AuthController.php # POST /auth
 │   │   ├── AuthMiddleware.php # Valida o Bearer token
 │   │   ├── SyncController.php # upload/batch/download/manifest/versions/file
-│   │   ├── Vaults.php         # Isolamento de múltiplos cofres (X-Vault-Id)
+│   │   ├── VaultController.php# Listar/criar/renomear/excluir cofres
+│   │   ├── Vaults.php         # Isolamento + gestão de múltiplos cofres
+│   │   ├── Users.php          # Usuários e escopo de acesso por cofre
 │   │   └── Storage.php        # I/O com proteção a traversal + versionamento
 │   ├── tests/                # Testes PHPUnit (unitários + integração)
 │   ├── composer.json
@@ -115,9 +117,9 @@ abra **Configurações → PHP Sync**, preencha URL/usuário/senha, clique em
 ## Testes
 
 ```bash
-cd backend   && composer test && composer phpstan       # PHPUnit (50) + PHPStan
-cd plugin    && npm run lint && npm test && npm run build   # ESLint + Vitest (49) + build
-cd dashboard && npm run lint && npm test && npm run build   # ESLint + Vitest (12) + build
+cd backend   && composer test && composer phpstan       # PHPUnit (73) + PHPStan (nível 8)
+cd plugin    && npm run lint && npm test && npm run build   # ESLint + Vitest (53) + build
+cd dashboard && npm run lint && npm test && npm run build   # ESLint + Vitest (21) + build
 ```
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) roda os 3 conjuntos em cada PR/push.

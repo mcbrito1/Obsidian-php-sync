@@ -73,4 +73,67 @@ final class VaultsTest extends TestCase
             'space' => ['my vault'],
         ];
     }
+
+    public function testListEnumeratesExistingVaults(): void
+    {
+        $vaults = new Vaults($this->base);
+        $vaults->for('alice')->write('a.md', 'x');
+        $vaults->for('bob')->write('b.md', 'y');
+
+        self::assertSame(['alice', 'bob'], $vaults->list());
+    }
+
+    public function testListIsEmptyWhenNoVaults(): void
+    {
+        $vaults = new Vaults($this->base . '/inexistente');
+        self::assertSame([], $vaults->list());
+    }
+
+    public function testCreateAndExists(): void
+    {
+        $vaults = new Vaults($this->base);
+
+        self::assertFalse($vaults->exists('novo'));
+        self::assertSame('novo', $vaults->create('novo'));
+        self::assertTrue($vaults->exists('novo'));
+    }
+
+    public function testCreateRejectsDuplicate(): void
+    {
+        $vaults = new Vaults($this->base);
+        $vaults->create('dup');
+
+        $this->expectException(\RuntimeException::class);
+        $vaults->create('dup');
+    }
+
+    public function testRenameMovesContent(): void
+    {
+        $vaults = new Vaults($this->base);
+        $vaults->for('antigo')->write('nota.md', 'conteudo');
+
+        self::assertSame('novo', $vaults->rename('antigo', 'novo'));
+        self::assertFalse($vaults->exists('antigo'));
+        self::assertSame('conteudo', $vaults->for('novo')->read('nota.md'));
+    }
+
+    public function testRenameFailsWhenDestinationExists(): void
+    {
+        $vaults = new Vaults($this->base);
+        $vaults->create('a');
+        $vaults->create('b');
+
+        $this->expectException(\RuntimeException::class);
+        $vaults->rename('a', 'b');
+    }
+
+    public function testDeleteRemovesVaultAndIsIdempotent(): void
+    {
+        $vaults = new Vaults($this->base);
+        $vaults->for('lixo')->write('nota.md', 'x');
+
+        self::assertTrue($vaults->delete('lixo'));
+        self::assertFalse($vaults->exists('lixo'));
+        self::assertFalse($vaults->delete('lixo'));
+    }
 }

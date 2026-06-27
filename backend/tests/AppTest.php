@@ -200,6 +200,87 @@ final class AppTest extends TestCase
         self::assertSame('invalid_vault', $this->jsonOf($response)['error']);
     }
 
+    public function testAdminListsCreatesRenamesAndDeletesVaults(): void
+    {
+        $token = $this->authenticate();
+
+        // Cria dois cofres.
+        self::assertSame(201, $this->dispatch('POST', '/vaults', ['id' => 'alpha'], $token)->getStatusCode());
+        self::assertSame(201, $this->dispatch('POST', '/vaults', ['id' => 'beta'], $token)->getStatusCode());
+
+        // Lista.
+        $list = $this->dispatch('GET', '/vaults', null, $token);
+        self::assertSame(200, $list->getStatusCode());
+        self::assertSame(['alpha', 'beta'], $this->jsonOf($list)['vaults']);
+
+        // Renomeia alpha -> gamma.
+        $rename = $this->dispatch('PUT', '/vaults/alpha', ['newId' => 'gamma'], $token);
+        self::assertSame(200, $rename->getStatusCode());
+
+        // Exclui beta.
+        self::assertSame(200, $this->dispatch('DELETE', '/vaults/beta', null, $token)->getStatusCode());
+
+        $list2 = $this->dispatch('GET', '/vaults', null, $token);
+        self::assertSame(['gamma'], $this->jsonOf($list2)['vaults']);
+    }
+
+    public function testCreateVaultRejectsDuplicate(): void
+    {
+        $token = $this->authenticate();
+        $this->dispatch('POST', '/vaults', ['id' => 'dup'], $token);
+
+        $response = $this->dispatch('POST', '/vaults', ['id' => 'dup'], $token);
+
+        self::assertSame(409, $response->getStatusCode());
+    }
+
+    public function testScopedUserCannotAccessOrManageOtherVaults(): void
+    {
+        $usersFile = $this->storage . '-users.json';
+        file_put_contents($usersFile, (string) json_encode([
+            'admin' => ['password' => 'adm', 'vaults' => '*'],
+            'alice' => ['password' => 'pw', 'vaults' => ['alice']],
+        ]));
+
+        $config = new Config(
+            username: 'ignored',
+            password: 'ignored',
+            jwtSecret: 'test-secret',
+            jwtTtl: 3600,
+            storagePath: $this->storage,
+            usersFile: $usersFile,
+        );
+        $app = AppFactory::create($config);
+
+        try {
+            $aliceLogin = $this->dispatch('POST', '/auth', ['username' => 'alice', 'password' => 'pw'], null, [], $app);
+            self::assertSame(200, $aliceLogin->getStatusCode());
+            $aliceToken = $this->jsonOf($aliceLogin)['token'];
+
+            // Acesso ao próprio cofre: OK.
+            $ok = $this->dispatch('POST', '/upload', [
+                'path' => 'n.md',
+                'content' => base64_encode('x'),
+            ], $aliceToken, ['X-Vault-Id' => 'alice'], $app);
+            self::assertSame(200, $ok->getStatusCode());
+
+            // Acesso a outro cofre: 403.
+            $forbidden = $this->dispatch('GET', '/list', null, $aliceToken, ['X-Vault-Id' => 'bob'], $app);
+            self::assertSame(403, $forbidden->getStatusCode());
+            self::assertSame('forbidden_vault', $this->jsonOf($forbidden)['error']);
+
+            // Gestão de cofres é só para admin: 403.
+            $manage = $this->dispatch('POST', '/vaults', ['id' => 'novo'], $aliceToken, [], $app);
+            self::assertSame(403, $manage->getStatusCode());
+
+            // Listagem filtrada pelo escopo: só "alice".
+            $list = $this->dispatch('GET', '/vaults', null, $aliceToken, [], $app);
+            self::assertSame(['alice'], $this->jsonOf($list)['vaults']);
+        } finally {
+            @unlink($usersFile);
+        }
+    }
+
     public function testFileSizeLimitReturns413(): void
     {
         $config = new Config(
@@ -414,6 +495,7 @@ final class AppTest extends TestCase
     /**
      * @param array<string,mixed>|null $body
      * @param array<string,string> $headers
+     * @param App<\Psr\Container\ContainerInterface|null>|null $app
      */
     private function dispatch(
         string $method,
@@ -421,6 +503,7 @@ final class AppTest extends TestCase
         ?array $body = null,
         ?string $token = null,
         array $headers = [],
+        ?App $app = null,
     ): ResponseInterface {
         $parts = explode('?', $path, 2);
         $uri = $parts[0];
@@ -447,7 +530,7 @@ final class AppTest extends TestCase
                 ->withBody($stream);
         }
 
-        return $this->app->handle($request);
+        return ($app ?? $this->app)->handle($request);
     }
 
     /**

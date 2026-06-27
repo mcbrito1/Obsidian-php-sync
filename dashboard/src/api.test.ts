@@ -6,9 +6,13 @@ import {
     downloadText,
     uploadText,
     fetchVersions,
+    fetchVaults,
+    createVault,
+    renameVault,
+    deleteVault,
     UNAUTHORIZED_EVENT,
 } from "./api";
-import { getToken, setToken } from "./auth";
+import { getToken, isAdminUser, setToken } from "./auth";
 import { textToBase64 } from "./base64";
 
 function jsonResponse(status: number, data: unknown) {
@@ -57,6 +61,16 @@ describe("login", () => {
             status: 401,
             message: "Usuário ou senha inválidos.",
         });
+    });
+
+    it("marca admin quando o escopo é '*' e não-admin caso contrário", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: "t", vaults: "*" }));
+        await login("admin", "x");
+        expect(isAdminUser()).toBe(true);
+
+        fetchMock.mockResolvedValueOnce(jsonResponse(200, { token: "t", vaults: ["alice"] }));
+        await login("alice", "x");
+        expect(isAdminUser()).toBe(false);
     });
 });
 
@@ -107,6 +121,47 @@ describe("rotas autenticadas", () => {
         fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: "not_found", message: "nao existe" }));
 
         await expect(downloadText("x.md", "default")).rejects.toBeInstanceOf(ApiError);
+    });
+
+    it("fetchVaults retorna a lista de cofres", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(200, { vaults: ["alice", "bob"] }));
+
+        const vaults = await fetchVaults();
+
+        expect(vaults).toEqual(["alice", "bob"]);
+        expect(fetchMock.mock.calls[0][0]).toBe("/api/vaults");
+    });
+
+    it("createVault faz POST /vaults com o id", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(201, { status: "ok", vault: "novo" }));
+
+        await createVault("novo");
+
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe("/api/vaults");
+        expect(init.method).toBe("POST");
+        expect(JSON.parse(init.body)).toEqual({ id: "novo" });
+    });
+
+    it("renameVault faz PUT /vaults/{id} com newId", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(200, { status: "ok", vault: "depois" }));
+
+        await renameVault("antes", "depois");
+
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe("/api/vaults/antes");
+        expect(init.method).toBe("PUT");
+        expect(JSON.parse(init.body)).toEqual({ newId: "depois" });
+    });
+
+    it("deleteVault faz DELETE /vaults/{id}", async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(200, { status: "ok", deleted: true }));
+
+        await deleteVault("lixo");
+
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe("/api/vaults/lixo");
+        expect(init.method).toBe("DELETE");
     });
 
     it("em 401 limpa o token e emite o evento de logout", async () => {
